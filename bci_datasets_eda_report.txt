@@ -1,0 +1,67 @@
+================================================================================
+BCI DATASETS EXPLORATORY DATA ANALYSIS REPORT
+================================================================================
+
+1. K3B DATASET ANALYSIS
+--------------------------------------------------
+Dataset Overview:
+  • Total trials: 360
+  • Valid trials: 180 (50.0%)
+  • Invalid trials: 180 (50.0%)
+  • Signal file size: 904.4 MB
+
+Class Distribution:
+  • Left Hand: 45 trials (25.0%)
+  • Right Hand: 45 trials (25.0%)
+  • Foot: 45 trials (25.0%)
+  • Tongue: 45 trials (25.0%)
+
+Class Balance Analysis:
+  • Balance score: 0.00% (lower is better)
+  • Is balanced: Yes
+  • Expected per class: 45.0 trials
+
+2. BCI COMPETITION IV DATASET 2A ANALYSIS
+--------------------------------------------------
+Dataset Overview:
+  • Number of subjects: 9/9
+  • Total training epochs: 0
+  • Total evaluation epochs: 0
+
+
+Subject-wise Data:
+  • A01: 0 train, 0 eval
+  • A02: 0 train, 0 eval
+  • A03: 0 train, 0 eval
+  • A04: 0 train, 0 eval
+  • A05: 0 train, 0 eval
+  • A06: 0 train, 0 eval
+  • A07: 0 train, 0 eval
+  • A08: 0 train, 0 eval
+  • A09: 0 train, 0 eval
+
+3. DATASET COMPARISON
+--------------------------------------------------
+Dataset Sizes:
+  • k3b: 180 valid trials
+  • BCI IV 2a Training: 0 trials
+  • BCI IV 2a Evaluation: 0 trials
+
+Class Balance Summary:
+  • k3b: ✓ Balanced (score: 0.00%)
+
+4. RECOMMENDATIONS
+--------------------------------------------------
+k3b Dataset:
+  • High invalid trial rate (50.0%) - investigate data quality
+  • Consider artifact removal or stricter preprocessing
+
+General Recommendations:
+  • Use stratified train-test splits to maintain class balance
+  • Apply data augmentation techniques for motor imagery
+  • Consider ensemble methods to handle class imbalance
+  • Monitor per-class performance metrics during training
+
+================================================================================
+END OF REPORT
+================================================================================

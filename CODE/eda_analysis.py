@@ -39,9 +39,12 @@ class BCIDatasetAnalyzer:
         )
         self.logger = logging.getLogger(__name__)
         
-        # Dataset paths
-        self.k3b_path = "BCI/k3b"
-        self.bci4_2a_path = "BCI/bci4_2a"
+        # Get the directory where this script is located
+        self.script_dir = Path(__file__).parent.resolve()
+        
+        # Dataset paths (relative to script location)
+        self.k3b_path = self.script_dir / "BCI" / "k3b"
+        self.bci4_2a_path = self.script_dir / "BCI" / "bci4_2a"
         
         # Class information
         self.class_names = {
@@ -185,10 +188,14 @@ class BCIDatasetAnalyzer:
             # Initialize loader
             loader = BCI4_2A_Loader()
             
-            # Get list of available files
-            gdf_files = [f for f in os.listdir(self.bci4_2a_path) if f.endswith('.gdf')]
-            training_files = [f for f in gdf_files if 'T.gdf' in f]
-            evaluation_files = [f for f in gdf_files if 'E.gdf' in f]
+            # Get list of available files (check for both .mat and .gdf)
+            all_files = os.listdir(self.bci4_2a_path)
+            mat_files = [f for f in all_files if f.endswith('.mat')]
+            gdf_files = [f for f in all_files if f.endswith('.gdf')]
+            data_files = mat_files if mat_files else gdf_files
+            file_ext = '.mat' if mat_files else '.gdf'
+            training_files = [f for f in data_files if f'T{file_ext}' in f]
+            evaluation_files = [f for f in data_files if f'E{file_ext}' in f]
             
             # Analyze each subject
             subject_results = {}
@@ -200,7 +207,7 @@ class BCIDatasetAnalyzer:
                 
                 try:
                     # Load training session
-                    train_file = f"{subject_id}T.gdf"
+                    train_file = f"{subject_id}T{file_ext}"
                     if train_file in training_files:
                         epochs_train, labels_train = loader.load_subject(subject_id, 'T')
                         all_training_labels.extend(labels_train)
@@ -208,7 +215,7 @@ class BCIDatasetAnalyzer:
                         epochs_train, labels_train = None, []
                     
                     # Load evaluation session  
-                    eval_file = f"{subject_id}E.gdf"
+                    eval_file = f"{subject_id}E{file_ext}"
                     if eval_file in evaluation_files:
                         epochs_eval, labels_eval = loader.load_subject(subject_id, 'E')
                         all_evaluation_labels.extend(labels_eval)

@@ -1,9 +1,9 @@
 """
 BCI Competition IV Dataset 2a Loader
-Loads and preprocesses GDF files from BCI Competition IV Dataset 2a
+Loads and preprocesses MAT files from BCI Competition IV Dataset 2a
 
 This module handles:
-- Loading GDF files using Python-based parsing
+- Loading MAT files using scipy.io
 - Extracting motor imagery epochs (left hand, right hand, foot, tongue)
 - Preprocessing for 4-class motor imagery classification
 - Integration with existing BCI pipeline
@@ -18,18 +18,23 @@ from pathlib import Path
 from typing import Tuple, Dict, List, Optional
 from scipy import signal
 from scipy.signal import butter, filtfilt
+from scipy.io import loadmat
 import warnings
 
 class BCI4_2A_Loader:
     """
-    Loader for BCI Competition IV Dataset 2a GDF files.
+    Loader for BCI Competition IV Dataset 2a MAT files.
     
     Handles loading, event extraction, and preprocessing of the 4-class
     motor imagery data from 9 subjects.
     """
     
-    def __init__(self, config_path: str = "config.yaml"):
+    def __init__(self, config_path: str = None):
         """Initialize BCI IV 2a loader with configuration."""
+        # Use script-relative path for config if not provided
+        if config_path is None:
+            script_dir = Path(__file__).parent.resolve()
+            config_path = script_dir / "config.yaml"
         with open(config_path, 'r') as f:
             self.config = yaml.safe_load(f)
         
@@ -73,57 +78,80 @@ class BCI4_2A_Loader:
             1: 'run_start'          # Start of run
         }
         
-        self.data_path = "BCI/bci4_2a"  # Dataset path
+        # Dataset path (relative to script location)
+        script_dir = Path(__file__).parent.resolve()
+        self.data_path = script_dir / "BCI" / "bci4_2a"
         
-    def load_gdf_file(self, gdf_path: str) -> Tuple[np.ndarray, Dict]:
+    def load_mat_file(self, mat_path: str) -> Tuple[np.ndarray, np.ndarray]:
         """
-        Load GDF file and extract signals and events.
+        Load MAT file and extract epochs and labels.
         
         Args:
-            gdf_path: Path to GDF file
+            mat_path: Path to MAT file
             
         Returns:
-            signals: EEG/EOG signals (samples, channels)  
-            events: Dictionary with event information
+            epochs: Extracted epochs (trials, samples, channels)
+            labels: Class labels for each epoch (0-3)
         """
-        self.logger.info(f"Loading GDF file: {gdf_path}")
+        self.logger.info(f"Loading MAT file: {mat_path}")
         
-        try:
-            # Use MNE-Python for robust GDF loading
-            import mne
+        mat = loadmat(mat_path)
+        data = mat['data']
+        
+        all_epochs = []
+        all_labels = []
+        
+        # Iterate through all runs (typically 9 runs per session)
+        for run_idx in range(data.shape[1]):
+            run_data = data[0, run_idx]
             
-            # Load raw data
-            raw = mne.io.read_raw_gdf(gdf_path, preload=True, verbose=False)
+            X = run_data['X'][0, 0]  # Continuous signal (samples, channels)
+            y = run_data['y'][0, 0]  # Labels
+            trial = run_data['trial'][0, 0]  # Trial start indices
+            fs = run_data['fs'][0, 0].flatten()[0]  # Sampling rate
             
-            # Get signals (convert from V to µV)
-            signals = raw.get_data().T * 1e6  # (samples, channels)
+            # Skip runs without labels (calibration/baseline runs)
+            if y.size == 0 or trial.size == 0:
+                self.logger.debug(f"Run {run_idx}: No labels, skipping (calibration run)")
+                continue
             
-            # Get events
-            events, event_id = mne.events_from_annotations(raw, verbose=False)
+            y = y.flatten()
+            trial = trial.flatten()
             
-            # Extract sampling rate
-            sfreq = raw.info['sfreq']
+            self.logger.debug(f"Run {run_idx}: {len(y)} trials, fs={fs}")
             
-            # Organize event information
-            event_info = {
-                'positions': events[:, 0],  # Sample positions
-                'types': events[:, 2],      # Event types
-                'sfreq': sfreq,
-                'event_id': event_id
-            }
+            # Extract epochs: 4 seconds starting from cue (trial marker)
+            # BCI IV 2a: cue at t=2s, motor imagery from t=3s to t=6s
+            # We extract from cue onset for 4 seconds
+            epoch_samples = int(self.epoch_length * fs)  # 4s * 250Hz = 1000 samples
             
-            self.logger.info(f"Loaded signals shape: {signals.shape}")
-            self.logger.info(f"Sampling rate: {sfreq} Hz")
-            self.logger.info(f"Found {len(events)} events")
-            
-            return signals, event_info
-            
-        except ImportError:
-            self.logger.warning("MNE-Python not available, using fallback GDF reader")
-            return self._load_gdf_fallback(gdf_path)
-        except Exception as e:
-            self.logger.error(f"Error loading GDF file: {e}")
-            return self._load_gdf_fallback(gdf_path)
+            for i, (start_idx, label) in enumerate(zip(trial, y)):
+                # Start from cue onset (trial marker)
+                start_sample = int(start_idx)
+                end_sample = start_sample + epoch_samples
+                
+                # Check bounds
+                if end_sample <= X.shape[0]:
+                    # Extract epoch (use only EEG channels: first 22)
+                    epoch = X[start_sample:end_sample, :self.n_eeg_channels]
+                    all_epochs.append(epoch)
+                    all_labels.append(int(label) - 1)  # Convert 1-4 to 0-3
+                else:
+                    self.logger.warning(f"Run {run_idx}, trial {i}: out of bounds, skipping")
+        
+        epochs = np.array(all_epochs)
+        labels = np.array(all_labels)
+        
+        self.logger.info(f"Loaded {len(epochs)} epochs from MAT file")
+        self.logger.info(f"Epochs shape: {epochs.shape}")
+        
+        # Show class distribution
+        unique_labels, counts = np.unique(labels, return_counts=True)
+        for label_idx, count in zip(unique_labels, counts):
+            class_name = self.class_names[label_idx]
+            self.logger.info(f"  - Class {label_idx} ({class_name}): {count} epochs")
+        
+        return epochs, labels
     
     def _load_gdf_fallback(self, gdf_path: str) -> Tuple[np.ndarray, Dict]:
         """
@@ -321,22 +349,26 @@ class BCI4_2A_Loader:
             epochs: Preprocessed epochs (trials, samples, channels)
             labels: Class labels
         """
-        # Construct file path
-        filename = f"{subject_id}{session}.gdf"
-        file_path = os.path.join(self.data_path, filename)
+        # Construct file path - try MAT first, then GDF
+        mat_filename = f"{subject_id}{session}.mat"
+        mat_path = os.path.join(self.data_path, mat_filename)
         
-        if not os.path.exists(file_path):
-            raise FileNotFoundError(f"File not found: {file_path}")
+        if os.path.exists(mat_path):
+            self.logger.info(f"Loading subject {subject_id}, session {session} from MAT file")
+            # Load MAT file (already extracts epochs)
+            epochs, labels = self.load_mat_file(mat_path)
+        else:
+            # Fallback to GDF if available
+            gdf_filename = f"{subject_id}{session}.gdf"
+            gdf_path = os.path.join(self.data_path, gdf_filename)
+            if os.path.exists(gdf_path):
+                self.logger.info(f"Loading subject {subject_id}, session {session} from GDF file")
+                signals, event_info = self.load_gdf_file(gdf_path)
+                epochs, labels = self.extract_motor_imagery_epochs(signals, event_info)
+            else:
+                raise FileNotFoundError(f"No data file found for {subject_id}{session} (tried .mat and .gdf)")
         
-        self.logger.info(f"Loading subject {subject_id}, session {session}")
-        
-        # Load GDF file
-        signals, event_info = self.load_gdf_file(file_path)
-        
-        # Extract epochs
-        epochs, labels = self.extract_motor_imagery_epochs(signals, event_info)
-        
-        # Preprocess
+        # Preprocess epochs
         epochs_preprocessed = self.preprocess_epochs(epochs)
         
         return epochs_preprocessed, labels
