@@ -1,0 +1,105 @@
+{
+  "timestamp": "20251021_151112",
+  "model_path": "models/eegnet_4class_motor_imagery.keras",
+  "data_source": "unified_balanced",
+  "test_samples": 212,
+  "standard_accuracy": 0.47641509433962265,
+  "balanced_accuracy": 0.47641509433962265,
+  "precision": 0.6578293010752688,
+  "recall": 0.47641509433962265,
+  "f1_score": 0.3902003857373033,
+  "cohen_kappa": 0.30188679245283023,
+  "per_class_metrics": {
+    "Left Hand": {
+      "precision": 0.8958333333333334,
+      "recall": 0.8113207547169812,
+      "f1_score": 0.8514851485148515
+    },
+    "Right Hand": {
+      "precision": 1.0,
+      "recall": 0.07547169811320754,
+      "f1_score": 0.14035087719298245
+    },
+    "Foot": {
+      "precision": 0.4,
+      "recall": 0.03773584905660377,
+      "f1_score": 0.06896551724137931
+    },
+    "Tongue": {
+      "precision": 0.33548387096774196,
+      "recall": 0.9811320754716981,
+      "f1_score": 0.5
+    }
+  },
+  "confusion_matrix": [
+    [
+      43,
+      0,
+      0,
+      10
+    ],
+    [
+      3,
+      4,
+      3,
+      43
+    ],
+    [
+      1,
+      0,
+      2,
+      50
+    ],
+    [
+      1,
+      0,
+      0,
+      52
+    ]
+  ],
+  "classification_report": {
+    "Left Hand": {
+      "precision": 0.8958333333333334,
+      "recall": 0.8113207547169812,
+      "f1-score": 0.8514851485148515,
+      "support": 53.0
+    },
+    "Right Hand": {
+      "precision": 1.0,
+      "recall": 0.07547169811320754,
+      "f1-score": 0.14035087719298245,
+      "support": 53.0
+    },
+    "Foot": {
+      "precision": 0.4,
+      "recall": 0.03773584905660377,
+      "f1-score": 0.06896551724137931,
+      "support": 53.0
+    },
+    "Tongue": {
+      "precision": 0.33548387096774196,
+      "recall": 0.9811320754716981,
+      "f1-score": 0.5,
+      "support": 53.0
+    },
+    "accuracy": 0.47641509433962265,
+    "macro avg": {
+      "precision": 0.6578293010752688,
+      "recall": 0.47641509433962265,
+      "f1-score": 0.3902003857373033,
+      "support": 212.0
+    },
+    "weighted avg": {
+      "precision": 0.6578293010752688,
+      "recall": 0.47641509433962265,
+      "f1-score": 0.3902003857373033,
+      "support": 212.0
+    }
+  },
+  "confidence_stats": {
+    "mean": 0.893913984298706,
+    "std": 0.1469007432460785,
+    "min": 0.3807753920555115,
+    "max": 0.9977508187294006
+  }
+}

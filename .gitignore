@@ -104,6 +104,15 @@ ENV/
 env.bak/
 venv.bak/
 
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
 # Spyder project settings
 .spyderproject
 .spyproject
@@ -314,3 +323,6 @@ cache/
 # Temporary processing files
 processing_temp/
 temp_files/
+
+#frontend
+node_modules

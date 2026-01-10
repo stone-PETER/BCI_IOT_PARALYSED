@@ -1,0 +1,92 @@
+================================================================================
+BCI DATASETS EXPLORATORY DATA ANALYSIS REPORT
+================================================================================
+
+1. K3B DATASET ANALYSIS
+--------------------------------------------------
+Dataset Overview:
+  • Total trials: 360
+  • Valid trials: 180 (50.0%)
+  • Invalid trials: 180 (50.0%)
+  • Signal file size: 904.4 MB
+
+Class Distribution:
+  • Left Hand: 45 trials (25.0%)
+  • Right Hand: 45 trials (25.0%)
+  • Foot: 45 trials (25.0%)
+  • Tongue: 45 trials (25.0%)
+
+Class Balance Analysis:
+  • Balance score: 0.00% (lower is better)
+  • Is balanced: Yes
+  • Expected per class: 45.0 trials
+
+2. BCI COMPETITION IV DATASET 2A ANALYSIS
+--------------------------------------------------
+Dataset Overview:
+  • Number of subjects: 9/9
+  • Total training epochs: 584
+  • Total evaluation epochs: 251
+
+Training Data Class Distribution:
+  • Class 0: 264 trials (45.2%)
+  • Left Hand: 9 trials (1.5%)
+  • Right Hand: 15 trials (2.6%)
+  • Foot: 296 trials (50.7%)
+
+Training Data Balance:
+  • Balance score: 91.78%
+  • Is balanced: No
+  • Expected per class: 146.0 trials
+
+Evaluation Data Class Distribution:
+  • Class 0: 224 trials (89.2%)
+  • Left Hand: 9 trials (3.6%)
+  • Right Hand: 9 trials (3.6%)
+  • Foot: 9 trials (3.6%)
+
+Evaluation Data Balance:
+  • Balance score: 128.49%
+  • Is balanced: No
+  • Expected per class: 62.8 trials
+
+Subject-wise Data:
+  • A01: 18 train, 10 eval
+  • A02: 21 train, 8 eval
+  • A03: 21 train, 18 eval
+  • A04: 322 train, 63 eval
+  • A05: 29 train, 15 eval
+  • A06: 72 train, 76 eval
+  • A07: 20 train, 14 eval
+  • A08: 27 train, 20 eval
+  • A09: 54 train, 27 eval
+
+3. DATASET COMPARISON
+--------------------------------------------------
+Dataset Sizes:
+  • k3b: 180 valid trials
+  • BCI IV 2a Training: 584 trials
+  • BCI IV 2a Evaluation: 251 trials
+
+Class Balance Summary:
+  • k3b: ✓ Balanced (score: 0.00%)
+  • BCI IV 2a Training: ✗ Imbalanced (score: 91.78%)
+  • BCI IV 2a Evaluation: ✗ Imbalanced (score: 128.49%)
+
+4. RECOMMENDATIONS
+--------------------------------------------------
+k3b Dataset:
+  • High invalid trial rate (50.0%) - investigate data quality
+  • Consider artifact removal or stricter preprocessing
+  • Training data is imbalanced - consider stratified sampling
+  • Evaluation data is imbalanced - may affect performance metrics
+
+General Recommendations:
+  • Use stratified train-test splits to maintain class balance
+  • Apply data augmentation techniques for motor imagery
+  • Consider ensemble methods to handle class imbalance
+  • Monitor per-class performance metrics during training
+
+================================================================================
+END OF REPORT
+================================================================================

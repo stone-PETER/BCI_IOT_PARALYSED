@@ -17,6 +17,12 @@ from typing import Tuple, Dict, List, Optional
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 from tensorflow.keras.utils import to_categorical
+
+# Import from local preprocessing module in CODE directory
+import sys
+from pathlib import Path
+current_dir = Path(__file__).parent
+sys.path.insert(0, str(current_dir))
 from preprocessing import PreProcessor
 
 

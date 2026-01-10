@@ -1,0 +1,163 @@
+{
+  "timestamp": "20251021_150624",
+  "overall_accuracy": 0.7636363636363637,
+  "per_class_accuracy": {
+    "Left Hand": 0.7555555555555555,
+    "Right Hand": 0.0,
+    "Foot": 0.0,
+    "Tongue": 1.0
+  },
+  "precision": 0.6934889434889434,
+  "recall": 0.7636363636363637,
+  "f1_score": 0.7100032583903552,
+  "cohen_kappa": 0.5781710914454278,
+  "confusion_matrix": [
+    [
+      34,
+      0,
+      0,
+      11
+    ],
+    [
+      1,
+      0,
+      0,
+      6
+    ],
+    [
+      1,
+      0,
+      0,
+      7
+    ],
+    [
+      0,
+      0,
+      0,
+      50
+    ]
+  ],
+  "classification_report": {
+    "Left Hand": {
+      "precision": 0.9444444444444444,
+      "recall": 0.7555555555555555,
+      "f1-score": 0.8395061728395061,
+      "support": 45.0
+    },
+    "Right Hand": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1-score": 0.0,
+      "support": 7.0
+    },
+    "Foot": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1-score": 0.0,
+      "support": 8.0
+    },
+    "Tongue": {
+      "precision": 0.6756756756756757,
+      "recall": 1.0,
+      "f1-score": 0.8064516129032258,
+      "support": 50.0
+    },
+    "accuracy": 0.7636363636363637,
+    "macro avg": {
+      "precision": 0.40503003003003,
+      "recall": 0.4388888888888889,
+      "f1-score": 0.41148944643568297,
+      "support": 110.0
+    },
+    "weighted avg": {
+      "precision": 0.6934889434889434,
+      "recall": 0.7636363636363637,
+      "f1-score": 0.7100032583903552,
+      "support": 110.0
+    }
+  },
+  "processing_time_ms": 5.936145454545454,
+  "confidence_stats": {
+    "mean": 0.900456428527832,
+    "std": 0.12810273468494415,
+    "min": 0.29003798961639404,
+    "max": 0.9982795715332031
+  },
+  "model_path": "models/eegnet_4class_motor_imagery.keras",
+  "data_source": "unified",
+  "test_samples": 110,
+  "cross_validation": {
+    "mean_accuracy": 0.9164462884267172,
+    "std_accuracy": 0.03972925959546304,
+    "min_accuracy": 0.8571428656578064,
+    "max_accuracy": 0.9655172228813171,
+    "subject_results": [
+      {
+        "test_subject": "A01",
+        "test_accuracy": 0.8888888955116272,
+        "test_samples": 18,
+        "train_samples": 566
+      },
+      {
+        "test_subject": "A02",
+        "test_accuracy": 0.8571428656578064,
+        "test_samples": 21,
+        "train_samples": 563
+      },
+      {
+        "test_subject": "A03",
+        "test_accuracy": 0.8571428656578064,
+        "test_samples": 21,
+        "train_samples": 563
+      },
+      {
+        "test_subject": "A04",
+        "test_accuracy": 0.9006211161613464,
+        "test_samples": 322,
+        "train_samples": 262
+      },
+      {
+        "test_subject": "A05",
+        "test_accuracy": 0.9655172228813171,
+        "test_samples": 29,
+        "train_samples": 555
+      },
+      {
+        "test_subject": "A06",
+        "test_accuracy": 0.9583333134651184,
+        "test_samples": 72,
+        "train_samples": 512
+      },
+      {
+        "test_subject": "A07",
+        "test_accuracy": 0.949999988079071,
+        "test_samples": 20,
+        "train_samples": 564
+      },
+      {
+        "test_subject": "A08",
+        "test_accuracy": 0.9259259104728699,
+        "test_samples": 27,
+        "train_samples": 557
+      },
+      {
+        "test_subject": "A09",
+        "test_accuracy": 0.9444444179534912,
+        "test_samples": 54,
+        "train_samples": 530
+      }
+    ],
+    "n_subjects": 9
+  },
+  "realtime_simulation": {
+    "simulation_duration": 60,
+    "total_classifications": 3750,
+    "avg_processing_time_ms": 6.089532800000001,
+    "max_processing_time_ms": 9.696000000000002,
+    "throughput_hz": 164.21621047841305,
+    "avg_accuracy": 0.7629333333333334,
+    "accuracy_std": 0.13715950163546414,
+    "avg_confidence": 0.9004298448562622,
+    "realtime_capable": true
+  }
+}
