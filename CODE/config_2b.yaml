@@ -1,0 +1,48 @@
+# Configuration for BCI Competition IV Dataset 2b
+# Binary classification: Left hand vs Right hand
+# 3 EEG channels: C3, Cz, C4
+
+model:
+  # Model architecture (adjusted for 3 channels and binary classification)
+  chans: 3 # Only 3 channels (C3, Cz, C4)
+  samples: 1000 # 4 seconds at 250 Hz
+  nb_classes: 2 # Binary: left hand vs right hand
+  kernLength: 64
+  F1: 8
+  D: 2
+  F2: 16
+  dropoutRate: 0.5
+  dropoutType: "Dropout"
+  norm_rate: 0.25
+
+training:
+  # Training parameters
+  batch_size: 32
+  epochs: 300
+  learning_rate: 0.001
+  optimizer: "adam"
+
+  # Early stopping
+  early_stopping:
+    monitor: "val_accuracy"
+    patience: 50
+    restore_best_weights: true
+
+preprocessing:
+  # Signal preprocessing
+  filter_low: 8 # Hz
+  filter_high: 30 # Hz
+  apply_car: true # Common Average Reference
+  normalize: "zscore"
+
+paths:
+  data_path: "BCI/bci4_2b"
+  model_save_path: "models"
+  model_filename: "eegnet_2class_bci2b.keras"
+  logs_path: "../logs"
+
+logging:
+  level: "INFO"
+  save_to_file: true
+  log_filename: "training_2b.log"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"

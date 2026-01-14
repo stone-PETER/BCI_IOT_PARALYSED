@@ -1,0 +1,42 @@
+================================================================================
+BCI MOTOR IMAGERY CHANNEL IMPORTANCE ANALYSIS REPORT
+================================================================================
+
+TOP 10 MOST IMPORTANT CHANNELS FOR MOTOR IMAGERY:
+--------------------------------------------------------------------------------
+ 1. CP2    (Index: 16) - Score: 0.6208
+ 2. CP4    (Index: 17) - Score: 0.5789
+ 3. P1     (Index: 18) - Score: 0.5313
+ 4. FC2    (Index:  4) - Score: 0.5044
+ 5. CP3    (Index: 13) - Score: 0.4548
+ 6. CP1    (Index: 14) - Score: 0.4251
+ 7. Cz     (Index:  9) - Score: 0.4110
+ 8. POz    (Index: 21) - Score: 0.3751
+ 9. C2     (Index: 10) - Score: 0.3670
+10. C3     (Index:  7) - Score: 0.3292
+
+MOTOR CORTEX CHANNELS (Expected to be important):
+--------------------------------------------------------------------------------
+✓ C3     (Index:  7) - Score: 0.3292 - Rank: 10
+✓ Cz     (Index:  9) - Score: 0.4110 - Rank: 7
+  C4     (Index: 11) - Score: 0.2652 - Rank: 16
+✓ CP3    (Index: 13) - Score: 0.4548 - Rank: 5
+✓ CP4    (Index: 17) - Score: 0.5789 - Rank: 2
+
+ANALYSIS METHOD CONTRIBUTIONS:
+--------------------------------------------------------------------------------
+Inter-Class Variance      - Top: FC2    (0.0000)
+Signal-to-Noise Ratio     - Top: P1     (3.5701)
+Class Separability        - Top: FC2    (0.0000)
+Mu Band Power             - Top: P1     (0.0026)
+Beta Band Power           - Top: CP2    (0.0013)
+CSP Importance            - Top: CP1    (1.0000)
+
+RECOMMENDATIONS:
+--------------------------------------------------------------------------------
+1. For optimal motor imagery classification, focus on the top 10 channels
+2. Central channels (C3, Cz, C4) should be highly ranked for motor imagery
+3. Parietal channels (CP3, CP4, P3, P4) are also important for motor planning
+4. If using fewer channels, select from the top 5-8 ranked channels
+
+================================================================================

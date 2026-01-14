@@ -20,8 +20,10 @@ from tensorflow.keras.callbacks import (
     EarlyStopping, ModelCheckpoint, ReduceLROnPlateau, 
     TensorBoard, CSVLogger
 )
+from tensorflow.keras.utils import to_categorical
+from sklearn.model_selection import train_test_split
 
-from unified_bci_loader import UnifiedBCIDataLoader
+from bci4_2a_loader import BCI4_2A_Loader
 from eegnet_model import EEGNet
 
 
@@ -40,6 +42,11 @@ class EEGNetTrainer:
         Args:
             config_path: Path to configuration YAML file
         """
+        # Get script directory for relative path resolution
+        from pathlib import Path
+        script_dir = Path(__file__).parent.resolve()
+        config_path = script_dir / config_path
+        
         self.config_path = config_path  # Store config path for later use
         
         with open(config_path, 'r') as file:
@@ -62,7 +69,7 @@ class EEGNetTrainer:
                 level=log_level,
                 format=log_format,
                 handlers=[
-                    logging.FileHandler(log_file),
+                    logging.FileHandler(log_file, encoding='utf-8'),
                     logging.StreamHandler()
                 ]
             )
@@ -71,9 +78,8 @@ class EEGNetTrainer:
         
         self.logger = logging.getLogger(__name__)
         
-        # Initialize components
-        # Initialize unified data loader for multi-dataset support
-        self.data_loader = UnifiedBCIDataLoader(config_path)
+        # Initialize components - use BCI IV 2a loader directly
+        self.data_loader = BCI4_2A_Loader(str(config_path))
         self.eegnet = EEGNet(config_path)
         
         # Training state
@@ -86,32 +92,53 @@ class EEGNetTrainer:
     
     def load_and_prepare_data(self) -> Dict[str, np.ndarray]:
         """
-        Load and prepare data for training using unified multi-dataset loader.
+        Load and prepare data for training using BCI IV 2a loader.
         
         Returns:
             Dictionary containing train/validation/test splits
         """
-        self.logger.info("Loading and preparing data using unified multi-dataset loader...")
+        self.logger.info("Loading BCI Competition IV Dataset 2a...")
         
         try:
-            # Use unified loader to prepare all data splits with enhanced augmentation
-            data_splits = self.data_loader.prepare_for_training(augment_data=True)
+            # Load all subjects' training data
+            all_epochs, all_labels = self.data_loader.load_all_subjects(session='T')
             
-            # Log dataset information
-            dataset_info = data_splits['dataset_info']
-            self.logger.info(f"Combined dataset loaded successfully:")
+            self.logger.info(f"Loaded {len(all_epochs)} total epochs")
+            self.logger.info(f"Epochs shape: {all_epochs.shape}")
+            
+            # Convert labels to one-hot encoding
+            y_categorical = to_categorical(all_labels, num_classes=4)
+            
+            # Reshape for EEGNet: (trials, channels, samples, 1)
+            X = all_epochs.transpose(0, 2, 1)[..., np.newaxis]
+            
+            # Split into train/val/test
+            X_train_val, X_test, y_train_val, y_test = train_test_split(
+                X, y_categorical, 
+                test_size=0.2, 
+                random_state=42,
+                stratify=all_labels
+            )
+            
+            X_train, X_val, y_train, y_val = train_test_split(
+                X_train_val, y_train_val,
+                test_size=0.2,
+                random_state=42,
+                stratify=np.argmax(y_train_val, axis=1)
+            )
+            
+            dataset_info = {
+                'total_epochs': len(all_epochs),
+                'n_channels': all_epochs.shape[2],
+                'n_samples': all_epochs.shape[1],
+                'n_classes': 4
+            }
+            
+            self.logger.info(f"Dataset information:")
             self.logger.info(f"  - Total epochs: {dataset_info['total_epochs']}")
             self.logger.info(f"  - Channels: {dataset_info['n_channels']}")
             self.logger.info(f"  - Samples per epoch: {dataset_info['n_samples']}")
             self.logger.info(f"  - Classes: {dataset_info['n_classes']}")
-            
-            # Extract data splits
-            X_train = data_splits['X_train']
-            y_train = data_splits['y_train']
-            X_val = data_splits['X_val']
-            y_val = data_splits['y_val']
-            X_test = data_splits['X_test']
-            y_test = data_splits['y_test']
             
             self.logger.info(f"Data shapes:")
             self.logger.info(f"  - Training: X={X_train.shape}, y={y_train.shape}")
@@ -129,7 +156,7 @@ class EEGNetTrainer:
             }
             
         except Exception as e:
-            self.logger.error(f"Failed to load unified datasets: {e}")
+            self.logger.error(f"Failed to load BCI IV 2a dataset: {e}")
             raise RuntimeError(f"Data loading failed: {e}")
         
     def create_callbacks(self) -> list:
