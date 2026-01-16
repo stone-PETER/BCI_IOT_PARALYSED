@@ -1,52 +1,103 @@
-# BCI Motor Imagery Classification System - Phase 1
+# BCI Motor Imagery Classification System
 
 ## Overview
 
-This is the **Phase 1: Core BCI Application (Intent Layer)** implementation for motor imagery classification using EEG signals. The system processes brain signals to classify motor imagery intentions (left hand vs right hand movement) and maps them to IoT control commands.
+Complete **Brain-Computer Interface (BCI)** system for motor imagery classification using EEG signals. The system processes brain signals to classify motor imagery intentions (left hand vs right hand movement) for real-time control applications.
+
+**Key Features**:
+
+- ✅ Real-time EEG processing from **NPG Lite** hardware (Upside Down Labs)
+- ✅ Pre-trained **EEGNet** model (73.64% accuracy on BCI Competition IV 2b)
+- ✅ **3-channel** motor imagery classification (C3, Cz, C4)
+- ✅ **Chords-Python + LSL** integration for hardware communication
+- ✅ REST API for IoT control integration
+- ✅ Simulator mode for testing without hardware
+
+## 🚀 Quick Start
+
+### Test Without Hardware (Simulator)
+
+```bash
+cd CODE
+pip install -r requirements.txt
+python npg_realtime_bci.py --simulate
+```
+
+### Use With NPG Lite Hardware
+
+```bash
+# Terminal 1: Start Chords-Python
+python -m chordspy.connection --protocol usb
+
+# Terminal 2: Run BCI system
+python npg_realtime_bci.py
+```
+
+See [NPG_LITE_QUICKSTART.md](NPG_LITE_QUICKSTART.md) for detailed setup.
 
 ## 🧠 System Architecture
 
 The system follows a modular pipeline architecture:
 
 ```
-EEG Data → Preprocessing → EEGNet Model → Classification → Command Mapping → IoT Commands
+NPG Lite → Chords-Python → LSL Stream → Preprocessor → EEGNet → Classification → IoT Commands
 ```
 
 ### Core Components
 
-1. **Data Source Module** (`sim_generator.py`) - Simulates real-time EEG streaming
-2. **Preprocessing Module** (`preprocessing.py`) - Signal processing and feature extraction
-3. **EEGNet Model** (`eegnet_model.py`) - Deep learning classification model
-4. **BCI Pipeline** (`bci_pipeline.py`) - Orchestrates the complete data flow
-5. **API Server** (`api_server.py`) - REST API gateway for IoT integration
+1. **NPG Lite Adapter** (`npg_lite_adapter.py`) - Receives 3-channel EEG via LSL from Chords-Python
+2. **Preprocessing Module** (`npg_preprocessor.py`) - Signal processing (500→250 Hz, bandpass, CAR, z-score)
+3. **EEGNet Model** (`eegnet_model.py`) - Deep learning classification (73.64% accuracy)
+4. **Inference Engine** (`npg_inference.py`) - Real-time classification
+5. **Real-time BCI** (`npg_realtime_bci.py`) - Complete integration system
+6. **API Server** (`api_server.py`) - REST API gateway for IoT control
 
 ## 📁 Project Structure
 
 ```
 CODE/
-├── config.yaml              # System configuration
-├── requirements.txt         # Python dependencies
+├── # NPG Lite Integration (NEW!)
+├── npg_lite_adapter.py       # LSL stream receiver for NPG Lite
+├── npg_preprocessor.py       # Signal preprocessing (500→250 Hz)
+├── npg_inference.py          # Model inference engine
+├── npg_realtime_bci.py       # Complete real-time BCI system
+├── electrode_placement_verifier.py  # Signal quality checker
 ├──
-├── # Core Modules
-├── preprocessing.py          # Signal preprocessing
-├── eegnet_model.py          # EEGNet deep learning model
-├── data_loader.py           # Data loading and preparation
+├── # Configuration and Docs
+├── config.yaml               # System configuration
+├── requirements.txt          # Python dependencies (includes chordspy, pylsl)
+├── NPG_LITE_QUICKSTART.md   # Quick start guide
+├── NPG_LITE_USER_GUIDE.md   # Complete user guide
+├── NPG_LITE_CORRECTION_SUMMARY.md  # What was fixed
+├──
+├── # Core Training Modules
+├── preprocessing.py          # Original preprocessing (BCI datasets)
+├── eegnet_model.py          # EEGNet model architecture
 ├── train_model.py           # Model training pipeline
-├── sim_generator.py         # EEG data simulation
-├── bci_pipeline.py          # Complete BCI pipeline
-├── api_server.py            # Flask REST API server
+├── train_model_2b.py        # BCI Competition IV 2b trainer (3 channels)
+├──
+├── # BCI Competition Data Integration
+├── bci4_2a_loader.py        # BCI IV 2a dataset (4 class)
+├── gdf_data_loader.py       # GDF file loader
+├── unified_bci_loader.py    # Unified dataset interface
+├── dataset_preprocess.py    # Dataset preprocessing
+├── bci_preprocessed_data.npz # Preprocessed data
 ├──
 ├── # Testing and Demo
-├── demo.py                  # Complete system demonstration
+├── demo.py                  # Original demo
 ├── test_api_client.py       # API testing client
+├── validate_system.py       # System validation
+├── test_4class_motor_imagery.py  # 4-class testing
 ├──
-├── # Data
-├── bci_preprocessed_data.npz # Preprocessed BCI Competition IV data
-├── dataset_preprocess.py    # Data preprocessing script
+├── # Web Interface
+├── api_server.py            # Flask REST API
+├── motor_imagery_streamer.py # Real-time streaming API
 ├──
 └── # Generated (after training)
-    ├── models/              # Trained model storage
-    └── logs/               # Training and system logs
+    ├── models/              # Trained models
+    │   └── best_eegnet_2class_bci2b.keras  # 73.64% accuracy (3 channels)
+    ├── logs/                # Training logs
+    └── BCI/                 # BCI Competition datasets
 ```
 
 ## 🚀 Quick Start

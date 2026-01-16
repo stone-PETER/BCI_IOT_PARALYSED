@@ -1,0 +1,21 @@
+python -m chordspy.connection --protocol usb
+python -m chordspy.connection --protocol usb --port COM9
+python -m chordspy.connection --protocol wifi --ip YOUR_NPG_LITE_IP
+python -m chordspy.connection --protocol ble
+
+Connected to NPG Lite
+Streaming EEG data to LSL (500 Hz, 3 channels)
+Stream name: BioAmpDataStream
+
+Leave this terminal running! ⚠️
+
+Terminal 2: Run BCI System
+In a new terminal window:
+
+cd CODE
+python npg_realtime_bci.py
+or
+python npg_realtime_bci.py --confidence 0.6
+
+python npg_realtime_bci.py --direct --port COM6 --confidence 0.6
+python npg_realtime_bci.py --direct --port COM3 --baudrate 115200

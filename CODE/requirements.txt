@@ -10,6 +10,10 @@ scikit-learn==1.3.0
 # Signal Processing
 mne==1.4.2
 
+# NPG Lite Hardware Integration (via Chords-Python)
+chordspy  # Official Upside Down Labs library for NPG Lite
+pylsl  # Lab Streaming Layer for real-time EEG streaming
+
 # Web API
 Flask==2.3.2
 Flask-CORS==4.0.0
