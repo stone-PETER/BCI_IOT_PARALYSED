@@ -2,6 +2,17 @@
 
 ## Initial Setup (First Time)
 
+### 0. Determine Scaling Factor (Hardware Users Only)
+
+If using real NPG Lite hardware, first determine the correct scaling factor:
+
+```bash
+python CODE/calibrate_scaling.py --direct --port COM6
+```
+
+This analyzes your signal amplitude and recommends the correct `scaling_factor` value.
+For simulator, this step is not needed (default: 1.0).
+
 ### 1. Run Baseline Calibration
 
 ```bash
@@ -81,6 +92,41 @@ The system automatically loads the calibration and applies bias correction.
 - `--calibrate` - Run calibration mode
 - `--calibrate-duration 60` - Calibration duration (seconds)
 - `--no-bias-correction` - Disable bias correction
+
+### 4. Virtual Bipolar Filtering ✅
+
+**Purpose:** Match training data signal format (BCI Competition IV 2b used bipolar recordings)
+
+**Features:**
+
+- Computes differential signals: C3-Cz, Cz, C4-Cz
+- Enhances local cortical activity
+- Suppresses common-mode noise
+- Provides better spatial resolution
+
+**Parameters:**
+
+- `use_bipolar=True` (default in NPGPreprocessor)
+- Automatically applied in preprocessing pipeline
+
+**Why It Matters:**
+Training data used bipolar recordings, but NPG Lite provides monopolar.
+Without this conversion, the model sees completely different signal patterns!
+
+### 5. Microvolt Scaling ✅
+
+**Purpose:** Scale NPG Lite output to match training data amplitude (±50-100µV)
+
+**Features:**
+
+- Configurable scaling factor
+- Training data expects microvolts (µV)
+- NPG Lite may output in different units (V, mV, or raw ADC)
+
+**Parameters:**
+
+- `scaling_factor=1.0` (default, adjust based on hardware)
+- Use `calibrate_scaling.py` to determine correct value
 
 ---
 
@@ -164,6 +210,25 @@ python CODE/npg_realtime_bci.py --simulate --no-accumulator --no-bias-correction
 2. Headset moved → Adjust position and recalibrate
 3. Poor electrode contact → Check impedances
 
+### Predictions Still Around 50% (New)
+
+**Possible causes:**
+
+1. ❌ **Scaling factor wrong** → Run `python calibrate_scaling.py`
+2. ❌ **Bipolar disabled** → Verify `use_bipolar=True` in preprocessor
+3. ❌ **Signal quality poor** → Check electrode impedances
+4. Need recalibration → Run `--calibrate` again
+
+### Very Low or Very High Confidence
+
+**Possible causes:**
+
+1. **Signal amplitude wrong** → Check scaling factor
+   - Too low confidence (20-30%) → Increase scaling_factor
+   - Too high confidence (95-99%) → Decrease scaling_factor
+2. **Channel order incorrect** → Verify C3, Cz, C4 mapping
+3. Poor signal quality → Check connections
+
 ---
 
 ## File Locations
@@ -171,9 +236,10 @@ python CODE/npg_realtime_bci.py --simulate --no-accumulator --no-bias-correction
 ### Code Files
 
 - `CODE/npg_inference.py` - Inference engine with accumulator & bias correction
-- `CODE/npg_preprocessor.py` - Preprocessing with 50Hz notch filter
+- `CODE/npg_preprocessor.py` - Preprocessing with notch, bipolar, scaling
 - `CODE/npg_realtime_bci.py` - Real-time BCI system
 - `CODE/train_model_2b.py` - Model training script
+- `CODE/calibrate_scaling.py` - Scaling factor calibration tool
 
 ### Data Files
 
@@ -184,6 +250,7 @@ python CODE/npg_realtime_bci.py --simulate --no-accumulator --no-bias-correction
 
 - `CODE/LEAKY_ACCUMULATOR_SUMMARY.md` - Accumulator details
 - `CODE/BASELINE_CALIBRATION.md` - Calibration details
+- `CODE/VIRTUAL_BIPOLAR_GUIDE.md` - Bipolar filtering & scaling
 - `CODE/QUICK_REFERENCE.md` - This file
 
 ---
@@ -220,25 +287,29 @@ python CODE/npg_realtime_bci.py --simulate --no-accumulator --no-bias-correction
 ### Pipeline Flow
 
 ```
-NPG Lite (256 Hz, 6 ch)
+NPG Lite (256 Hz, 6 ch monopolar)
+  ↓
+Select C3, Cz, C4
+  ↓
+Scale to Microvolts            ← NEW (v2.1)
   ↓
 Resample (250 Hz)
   ↓
-Notch Filter (50 Hz)          ← NEW
+Notch Filter (50 Hz)           ← NEW (v2.0)
+  ↓
+Virtual Bipolar (C3-Cz, Cz, C4-Cz)  ← NEW (v2.1)
   ↓
 Bandpass (8-30 Hz)
-  ↓
-CAR Reference
   ↓
 Z-score Normalization
   ↓
 Model Prediction
   ↓
-Baseline Bias Correction      ← NEW
+Baseline Bias Correction       ← NEW (v2.0)
   ↓
-Smoothing Window (8 samples)  ← INCREASED
+Smoothing Window (8 samples)   ← INCREASED (v2.0)
   ↓
-Leaky Accumulator             ← NEW
+Leaky Accumulator              ← NEW (v2.0)
   ↓
 Command Trigger
 ```
@@ -246,16 +317,21 @@ Command Trigger
 ### Default Configuration
 
 ```python
+# Inference
 confidence_threshold = 0.65    # Was: 0.3
 smoothing_window = 8           # Was: 3
-accumulator_threshold = 2.0    # New
-accumulator_decay = 0.15       # New
-neutral_zone = (0.45, 0.55)   # New
-notch_freq = 50.0             # New
-apply_baseline_correction = True  # New
+accumulator_threshold = 2.0    # New (v2.0)
+accumulator_decay = 0.15       # New (v2.0)
+neutral_zone = (0.45, 0.55)   # New (v2.0)
+
+# Preprocessing
+notch_freq = 50.0              # New (v2.0)
+use_bipolar = True             # New (v2.1)
+scaling_factor = 1.0           # New (v2.1)
+apply_baseline_correction = True  # New (v2.0)
 ```
 
 ---
 
 **Last Updated:** 2026-02-03
-**Version:** 2.0 (with all enhancements)
+**Version:** 2.1 (with virtual bipolar filtering & microvolt scaling)

@@ -1,5 +1,5 @@
-python -m chordspy.connection --protocol usb
 python -m chordspy.connection --protocol usb --port COM9
+python -m chordspy.connection --protocol usb
 python -m chordspy.connection --protocol wifi --ip YOUR_NPG_LITE_IP
 python -m chordspy.connection --protocol ble
 

@@ -34,7 +34,9 @@ class NPGPreprocessor:
                  apply_notch: bool = True,
                  notch_freq: float = 50.0,
                  notch_q: float = 30.0,
-                 epoch_duration: float = 4.0):
+                 epoch_duration: float = 4.0,
+                 use_bipolar: bool = True,
+                 scaling_factor: float = 1.0):
         """
         Initialize preprocessor.
         
@@ -56,6 +58,8 @@ class NPGPreprocessor:
         self.notch_freq = notch_freq
         self.notch_q = notch_q
         self.epoch_duration = epoch_duration
+        self.use_bipolar = use_bipolar
+        self.scaling_factor = scaling_factor
         
         # Calculate epoch sizes
         self.input_epoch_samples = int(epoch_duration * input_rate)  # 2000 @ 500 Hz
@@ -100,6 +104,8 @@ class NPGPreprocessor:
         self.logger.info(f"  Bandpass: {filter_low}-{filter_high} Hz")
         if self.apply_notch:
             self.logger.info(f"  Notch: {self.notch_freq} Hz (Q={self.notch_q})")
+        self.logger.info(f"  Virtual bipolar: {self.use_bipolar} (C3-Cz, Cz, C4-Cz)")
+        self.logger.info(f"  Scaling factor: {self.scaling_factor}x (to microvolts)")
         self.logger.info(f"  Epoch: {epoch_duration}s ({self.output_epoch_samples} samples)")
     
     def resample_signal(self, data: np.ndarray) -> np.ndarray:
@@ -137,6 +143,55 @@ class NPGPreprocessor:
         selected = data[:, self.target_channels]
         
         return selected
+    
+    def scale_to_microvolts(self, data: np.ndarray) -> np.ndarray:
+        """
+        Scale raw data to microvolts (µV).
+        
+        The training data (BCI Competition IV 2b) has dynamic range ±50µV to ±100µV.
+        NPG Lite outputs need to be scaled to match this range.
+        
+        Args:
+            data: Input data in native units (n_samples, n_channels)
+        
+        Returns:
+            Data scaled to microvolts
+        """
+        return data * self.scaling_factor
+    
+    def apply_bipolar_montage(self, data: np.ndarray) -> np.ndarray:
+        """
+        Apply virtual bipolar (Laplacian) montage to match training data.
+        
+        Training data used bipolar recordings:
+        - C3 referenced to Cz: C3 - Cz
+        - Cz stays as is (or can be omitted)
+        - C4 referenced to Cz: C4 - Cz
+        
+        This simulates the spatial filtering used in BCI Competition IV 2b.
+        
+        Args:
+            data: Monopolar data (n_samples, 3) [C3, Cz, C4]
+        
+        Returns:
+            Bipolar data (n_samples, 3) [C3-Cz, Cz, C4-Cz]
+        """
+        if not self.use_bipolar or data.shape[1] != 3:
+            return data
+        
+        bipolar = np.zeros_like(data)
+        
+        # Extract channels (assuming order: C3, Cz, C4)
+        c3 = data[:, 0]
+        cz = data[:, 1]
+        c4 = data[:, 2]
+        
+        # Compute bipolar montage
+        bipolar[:, 0] = c3 - cz  # C3 referenced to Cz
+        bipolar[:, 1] = cz        # Cz (could also be zero or omitted)
+        bipolar[:, 2] = c4 - cz  # C4 referenced to Cz
+        
+        return bipolar
     
     def bandpass_filter(self, data: np.ndarray) -> np.ndarray:
         """
@@ -253,21 +308,28 @@ class NPGPreprocessor:
         # 1. Select channels (C3, Cz, C4)
         selected = self.select_channels(data)
         
-        # 2. Resample 256 → 250 Hz
-        resampled = self.resample_signal(selected)
+        # 2. Scale to microvolts (match training data range)
+        scaled = self.scale_to_microvolts(selected)
         
-        # 2.5 Apply notch filter (powerline interference)
+        # 3. Resample 256 → 250 Hz
+        resampled = self.resample_signal(scaled)
+        
+        # 4. Apply notch filter (powerline interference)
         if self.apply_notch:
             resampled = self.notch_filter(resampled)
         
-        # 3. Bandpass filter (8-30 Hz)
-        filtered = self.bandpass_filter(resampled)
+        # 5. Apply virtual bipolar montage (C3-Cz, Cz, C4-Cz)
+        if self.use_bipolar:
+            bipolar = self.apply_bipolar_montage(resampled)
+        else:
+            # Fallback to CAR if not using bipolar
+            bipolar = self.apply_car(resampled)
         
-        # 4. CAR reference
-        car = self.apply_car(filtered)
+        # 6. Bandpass filter (8-30 Hz)
+        filtered = self.bandpass_filter(bipolar)
         
-        # 5. Z-score normalization
-        normalized = self.zscore_normalize(car, update_stats=update_stats)
+        # 7. Z-score normalization
+        normalized = self.zscore_normalize(filtered, update_stats=update_stats)
         
         return normalized
     
