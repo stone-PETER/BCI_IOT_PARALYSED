@@ -261,6 +261,16 @@ class NPGLiteAdapter:
         self._last_quality = quality
         return quality
     
+    def get_buffer_size(self) -> int:
+        """
+        Get current buffer size (number of samples in buffer).
+        
+        Returns:
+            Number of samples currently in buffer
+        """
+        with self.buffer_lock:
+            return len(self.data_buffer)
+    
     def get_statistics(self) -> Dict:
         """Get streaming statistics."""
         if self.start_time is None:

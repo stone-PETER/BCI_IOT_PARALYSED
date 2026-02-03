@@ -31,22 +31,31 @@ class NPGRealtimeBCI:
     
     def __init__(self,
                  model_path: Optional[str] = None,
-                 confidence_threshold: float = 0.7,
-                 smoothing_window: int = 3,
+                 confidence_threshold: float = 0.65,
+                 smoothing_window: int = 8,
                  window_overlap: float = 0.5,
-                 simulate: bool = False):
+                 simulate: bool = False,
+                 use_accumulator: bool = True,
+                 accumulator_threshold: float = 2.0,
+                 accumulator_decay: float = 0.15,
+                 neutral_zone: tuple = (0.45, 0.55)):
         """
         Initialize real-time BCI system.
         
         Args:
             model_path: Path to trained model
-            confidence_threshold: Minimum confidence for command execution
-            smoothing_window: Number of predictions to smooth
+            confidence_threshold: Minimum confidence for command execution (default: 0.65)
+            smoothing_window: Number of predictions to smooth (default: 8)
             window_overlap: Overlap ratio for sliding windows (0-1)
             simulate: Use simulator instead of real device
+            use_accumulator: Use Leaky Accumulator for stable commands (default: True)
+            accumulator_threshold: Bucket level to trigger command (default: 2.0)
+            accumulator_decay: Decay rate per update (default: 0.15)
+            neutral_zone: Confidence range treated as uncertain (default: 0.45-0.55)
         """
         self.simulate = simulate
         self.confidence_threshold = confidence_threshold
+        self.use_accumulator = use_accumulator
         self.is_running = False
         
         # Setup logging
@@ -71,11 +80,15 @@ class NPGRealtimeBCI:
         self.preprocessor = NPGPreprocessor()
         self.logger.info("   ✅ Preprocessor ready")
         
-        # Inference engine
+        # Inference engine with Leaky Accumulator
         self.inference = NPGInferenceEngine(
             model_path=model_path,
             confidence_threshold=confidence_threshold,
-            smoothing_window=smoothing_window
+            smoothing_window=smoothing_window,
+            use_accumulator=use_accumulator,
+            accumulator_threshold=accumulator_threshold,
+            accumulator_decay=accumulator_decay,
+            neutral_zone=neutral_zone
         )
         self.logger.info("   ✅ Inference engine ready")
         
@@ -236,24 +249,36 @@ class NPGRealtimeBCI:
             # Preprocess
             preprocessed = self.preprocessor.preprocess_for_model(epoch_data)
             
-            # Inference
-            class_idx, confidence, class_name = self.inference.predict_smoothed(preprocessed)
-            
-            # Determine command
-            if confidence >= self.confidence_threshold:
-                command = class_name
-                self.command_counts[command] += 1
+            # Inference with accumulator (returns triggered command or UNCERTAIN)
+            if self.use_accumulator:
+                class_idx, confidence, class_name, is_triggered = self.inference.predict_with_accumulator(preprocessed)
+                
+                # Only count as command if accumulator triggered
+                if is_triggered:
+                    command = class_name
+                    self.command_counts[command] += 1
+                else:
+                    command = "UNCERTAIN"
+                    self.command_counts["UNCERTAIN"] += 1
             else:
-                command = "UNCERTAIN"
-                self.command_counts["UNCERTAIN"] += 1
+                # Fallback: simple smoothed prediction
+                class_idx, confidence, class_name = self.inference.predict_smoothed(preprocessed)
+                
+                if confidence >= self.confidence_threshold:
+                    command = class_name
+                    self.command_counts[command] += 1
+                else:
+                    command = "UNCERTAIN"
+                    self.command_counts["UNCERTAIN"] += 1
             
-            # Check if command changed
+            # Check if command changed (only for actual triggers, not UNCERTAIN)
             command_changed = (command != self.last_command and 
                              command != "UNCERTAIN")
             
             # Update tracking
-            self.last_command = command
-            self.last_command_time = time.time()
+            if command != "UNCERTAIN":
+                self.last_command = command
+                self.last_command_time = time.time()
             self.total_epochs_processed += 1
             
             # Track processing time
@@ -273,10 +298,19 @@ class NPGRealtimeBCI:
         """Log a new command."""
         icon = "👈" if command == "LEFT_HAND" else "👉"
         
+        # Add accumulator bucket info if enabled
+        bucket_info = ""
+        if self.use_accumulator:
+            status = self.inference.get_accumulator_status()
+            if status.get('enabled'):
+                left_pct = status['buckets']['LEFT_HAND']['percent_full']
+                right_pct = status['buckets']['RIGHT_HAND']['percent_full']
+                bucket_info = f" | Buckets: L={left_pct:3.0f}% R={right_pct:3.0f}%"
+        
         self.logger.info(
             f"{icon} {command:12} | "
             f"Confidence: {confidence:5.1%} | "
-            f"Processing: {proc_time*1000:5.1f}ms"
+            f"Processing: {proc_time*1000:5.1f}ms{bucket_info}"
         )
     
     def _log_status(self):
@@ -285,11 +319,20 @@ class NPGRealtimeBCI:
         epochs_per_sec = self.total_epochs_processed / runtime
         avg_proc_time = np.mean(self.processing_times) if self.processing_times else 0
         
+        # Add accumulator bucket info if enabled
+        bucket_info = ""
+        if self.use_accumulator:
+            status = self.inference.get_accumulator_status()
+            if status.get('enabled'):
+                left_pct = status['buckets']['LEFT_HAND']['percent_full']
+                right_pct = status['buckets']['RIGHT_HAND']['percent_full']
+                bucket_info = f" | Buckets: L={left_pct:3.0f}% R={right_pct:3.0f}%"
+        
         self.logger.info(
             f"📊 Status | "
             f"Epochs: {self.total_epochs_processed:4} | "
             f"Rate: {epochs_per_sec:4.1f}/s | "
-            f"Avg time: {avg_proc_time*1000:5.1f}ms"
+            f"Avg time: {avg_proc_time*1000:5.1f}ms{bucket_info}"
         )
     
     def stop(self):
@@ -312,6 +355,143 @@ class NPGRealtimeBCI:
         self.logger.info("="*70)
         self.logger.info("BCI system stopped")
         self.logger.info("="*70)
+    
+    def run_calibration(self, duration_seconds: int = 60):
+        """
+        Run baseline calibration to correct 2-class model bias.
+        User should sit still and look at a fixed point during this time.
+        
+        Args:
+            duration_seconds: Calibration duration (default: 60s)
+        """
+        self.logger.info("\n" + "="*70)
+        self.logger.info("🎯 BASELINE CALIBRATION MODE")
+        self.logger.info("="*70)
+        self.logger.info("Instructions:")
+        self.logger.info("  • Sit completely still")
+        self.logger.info("  • Look at a fixed point")
+        self.logger.info("  • Do NOT imagine any movement")
+        self.logger.info(f"  • Calibration will run for {duration_seconds} seconds")
+        self.logger.info("="*70)
+        
+        input("\nPress ENTER when ready to start calibration...")
+        
+        # Start calibration
+        self.inference.start_calibration()
+        self.adapter.start_streaming()
+        
+        # Collect data
+        start_time = time.time()
+        warmup_samples = 1024
+        warmup_complete = False
+        samples_collected = 0
+        
+        self.logger.info(f"\n⏱️  Calibrating... ({duration_seconds}s)")
+        self.logger.info("   Stay relaxed and still!\n")
+        
+        try:
+            while time.time() - start_time < duration_seconds:
+                # Get data
+                if not warmup_complete:
+                    data = self.adapter.get_latest_data(n_samples=warmup_samples)
+                    if data is not None and len(data) >= warmup_samples:
+                        warmup_complete = True
+                    else:
+                        time.sleep(0.1)
+                        continue
+                else:
+                    data = self.adapter.get_latest_data(n_samples=128)
+                
+                if data is None or len(data) < 10:
+                    time.sleep(0.1)
+                    continue
+                
+                # Add to window buffer
+                self.window_buffer.add_samples(data)
+                
+                # Process windows
+                windows = self.window_buffer.get_windows()
+                for window in windows:
+                    # Preprocess
+                    preprocessed = self.preprocessor.preprocess_for_model(window)
+                    
+                    # Add calibration sample
+                    self.inference.add_calibration_sample(preprocessed)
+                    samples_collected += 1
+                    
+                    # Progress update
+                    elapsed = time.time() - start_time
+                    remaining = duration_seconds - elapsed
+                    if samples_collected % 5 == 0:
+                        self.logger.info(f"   Progress: {elapsed:.0f}s / {duration_seconds}s "
+                                       f"({samples_collected} samples) - {remaining:.0f}s remaining")
+                
+                time.sleep(0.05)
+        
+        except KeyboardInterrupt:
+            self.logger.warning("\nCalibration interrupted!")
+        
+        finally:
+            self.adapter.stop_streaming()
+        
+        # Finalize calibration
+        self.logger.info(f"\n✅ Collected {samples_collected} samples")
+        
+        if self.inference.finalize_calibration():
+            self.logger.info("✅ Baseline calibration successful!")
+            
+            # Save bias to file
+            bias = self.inference.get_baseline_bias()
+            self._save_baseline_bias(bias)
+            
+            self.logger.info("\n" + "="*70)
+            self.logger.info("You can now run the BCI system with bias correction")
+            self.logger.info("="*70)
+            return True
+        else:
+            self.logger.error("❌ Calibration failed")
+            return False
+    
+    def _save_baseline_bias(self, bias: np.ndarray):
+        """Save baseline bias to JSON file."""
+        import json
+        bias_file = Path(__file__).parent / 'baseline_bias.json'
+        
+        try:
+            data = {
+                'bias': bias.tolist(),
+                'timestamp': time.strftime('%Y-%m-%d %H:%M:%S'),
+                'class_names': self.inference.class_names
+            }
+            
+            with open(bias_file, 'w') as f:
+                json.dump(data, f, indent=2)
+            
+            self.logger.info(f"💾 Saved baseline bias to: {bias_file.name}")
+        except Exception as e:
+            self.logger.error(f"Failed to save baseline bias: {e}")
+    
+    def _load_baseline_bias(self) -> bool:
+        """Load baseline bias from JSON file."""
+        import json
+        bias_file = Path(__file__).parent / 'baseline_bias.json'
+        
+        if not bias_file.exists():
+            return False
+        
+        try:
+            with open(bias_file, 'r') as f:
+                data = json.load(f)
+            
+            bias = np.array(data['bias'])
+            self.inference.set_baseline_bias(bias)
+            
+            self.logger.info(f"✅ Loaded baseline bias from: {bias_file.name}")
+            self.logger.info(f"   Calibrated: {data.get('timestamp', 'unknown')}")
+            return True
+        except Exception as e:
+            self.logger.warning(f"Failed to load baseline bias: {e}")
+            return False
     
     def _show_statistics(self):
         """Show comprehensive statistics."""
@@ -365,12 +545,28 @@ def main():
                        help='Serial baud rate for direct connection (default: 230400)')
     parser.add_argument('--model', type=str,
                        help='Path to trained model (default: models/best_eegnet_2class_bci2b.keras)')
-    parser.add_argument('--confidence', type=float, default=0.7,
-                       help='Confidence threshold for classification (0-1, default: 0.7)')
-    parser.add_argument('--smoothing', type=int, default=3,
-                       help='Smoothing window size for predictions (default: 3)')
+    parser.add_argument('--confidence', type=float, default=0.65,
+                       help='Confidence threshold for classification (0-1, default: 0.65)')
+    parser.add_argument('--smoothing', type=int, default=8,
+                       help='Smoothing window size for predictions (default: 8)')
     parser.add_argument('--overlap', type=float, default=0.5,
                        help='Window overlap ratio (0-1, default: 0.5)')
+    parser.add_argument('--no-accumulator', action='store_true',
+                       help='Disable Leaky Accumulator (use simple threshold instead)')
+    parser.add_argument('--acc-threshold', type=float, default=2.0,
+                       help='Accumulator trigger threshold (default: 2.0)')
+    parser.add_argument('--acc-decay', type=float, default=0.15,
+                       help='Accumulator decay rate per update (default: 0.15)')
+    parser.add_argument('--neutral-low', type=float, default=0.45,
+                       help='Neutral zone lower bound (default: 0.45)')
+    parser.add_argument('--neutral-high', type=float, default=0.55,
+                       help='Neutral zone upper bound (default: 0.55)')
+    parser.add_argument('--calibrate', action='store_true',
+                       help='Run baseline calibration (60s rest state recording)')
+    parser.add_argument('--calibrate-duration', type=int, default=60,
+                       help='Calibration duration in seconds (default: 60)')
+    parser.add_argument('--no-bias-correction', action='store_true',
+                       help='Disable baseline bias correction (even if calibrated)')
     parser.add_argument('--verbose', action='store_true',
                        help='Enable debug logging')
     
@@ -395,6 +591,10 @@ def main():
         print("   Train the model first with: python train_model_2b.py")
         sys.exit(1)
     
+    # Create neutral zone tuple
+    neutral_zone = (args.neutral_low, args.neutral_high)
+    use_accumulator = not args.no_accumulator
+    
     # Create BCI system based on mode
     if args.simulate:
         # Simulator mode
@@ -403,7 +603,11 @@ def main():
             confidence_threshold=args.confidence,
             smoothing_window=args.smoothing,
             window_overlap=args.overlap,
-            simulate=True
+            simulate=True,
+            use_accumulator=use_accumulator,
+            accumulator_threshold=args.acc_threshold,
+            accumulator_decay=args.acc_decay,
+            neutral_zone=neutral_zone
         )
     elif args.direct:
         # Direct serial connection mode
@@ -412,7 +616,11 @@ def main():
             confidence_threshold=args.confidence,
             smoothing_window=args.smoothing,
             window_overlap=args.overlap,
-            simulate=False
+            simulate=False,
+            use_accumulator=use_accumulator,
+            accumulator_threshold=args.acc_threshold,
+            accumulator_decay=args.acc_decay,
+            neutral_zone=neutral_zone
         )
         # Replace adapter with direct serial adapter
         bci.adapter = NPGLiteDirectSerial(port=args.port, baudrate=args.baudrate)
@@ -423,7 +631,11 @@ def main():
             confidence_threshold=args.confidence,
             smoothing_window=args.smoothing,
             window_overlap=args.overlap,
-            simulate=False
+            simulate=False,
+            use_accumulator=use_accumulator,
+            accumulator_threshold=args.acc_threshold,
+            accumulator_decay=args.acc_decay,
+            neutral_zone=neutral_zone
         )
     
     # Connect
@@ -443,6 +655,23 @@ def main():
             print("❌ Failed to find LSL stream. Make sure Chords-Python is running:")
             print("   python -m chordspy.connection --protocol usb")
             sys.exit(1)
+    
+    # Load baseline bias if not disabled
+    if not args.no_bias_correction:
+        bci._load_baseline_bias()
+    
+    # Run calibration if requested
+    if args.calibrate:
+        success = bci.run_calibration(duration_seconds=args.calibrate_duration)
+        if not success:
+            print("\n❌ Calibration failed. Run normal BCI anyway? (y/n): ", end='')
+            response = input().strip().lower()
+            if response != 'y':
+                sys.exit(1)
+        else:
+            print("\n✅ Calibration complete!")
+            print("   Run again without --calibrate to use the BCI system")
+            sys.exit(0)
     
     # Start processing
     print("\n🧠 Starting BCI system...")

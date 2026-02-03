@@ -31,6 +31,9 @@ class NPGPreprocessor:
                  target_channels: list = None,
                  filter_low: float = 8.0,
                  filter_high: float = 30.0,
+                 apply_notch: bool = True,
+                 notch_freq: float = 50.0,
+                 notch_q: float = 30.0,
                  epoch_duration: float = 4.0):
         """
         Initialize preprocessor.
@@ -49,6 +52,9 @@ class NPGPreprocessor:
         self.target_channels = target_channels or [0, 1, 2]  # C3, Cz, C4
         self.filter_low = filter_low
         self.filter_high = filter_high
+        self.apply_notch = apply_notch
+        self.notch_freq = notch_freq
+        self.notch_q = notch_q
         self.epoch_duration = epoch_duration
         
         # Calculate epoch sizes
@@ -65,6 +71,17 @@ class NPGPreprocessor:
             btype='band', 
             fs=output_rate
         )
+
+        # Design notch filter (50 Hz powerline) if requested
+        if self.apply_notch:
+            try:
+                self.notch_b, self.notch_a = signal.iirnotch(self.notch_freq, self.notch_q, fs=output_rate)
+            except Exception:
+                # Fallback: very narrow bandstop using butterworth if iirnotch unavailable
+                bw = self.notch_freq / self.notch_q
+                low = (self.notch_freq - bw/2.0)
+                high = (self.notch_freq + bw/2.0)
+                self.notch_b, self.notch_a = signal.butter(2, [low, high], btype='bandstop', fs=output_rate)
         
         # Normalization statistics (updated online)
         self.channel_means = np.zeros(len(self.target_channels))
@@ -81,6 +98,8 @@ class NPGPreprocessor:
         self.logger.info(f"  Expected input: 2000 samples @ 500 Hz (4 seconds)")
         self.logger.info(f"  Expected output: 1000 samples @ 250 Hz (4 seconds)")
         self.logger.info(f"  Bandpass: {filter_low}-{filter_high} Hz")
+        if self.apply_notch:
+            self.logger.info(f"  Notch: {self.notch_freq} Hz (Q={self.notch_q})")
         self.logger.info(f"  Epoch: {epoch_duration}s ({self.output_epoch_samples} samples)")
     
     def resample_signal(self, data: np.ndarray) -> np.ndarray:
@@ -135,6 +154,29 @@ class NPGPreprocessor:
             # Apply zero-phase filtering
             filtered[:, ch] = signal.filtfilt(self.filter_b, self.filter_a, data[:, ch])
         
+        return filtered
+
+    def notch_filter(self, data: np.ndarray) -> np.ndarray:
+        """
+        Apply notch (bandstop) filter to remove powerline noise (e.g., 50 Hz).
+
+        Args:
+            data: Input data (n_samples, n_channels)
+
+        Returns:
+            Filtered data
+        """
+        if not self.apply_notch:
+            return data
+
+        filtered = np.zeros_like(data)
+        for ch in range(data.shape[1]):
+            try:
+                filtered[:, ch] = signal.filtfilt(self.notch_b, self.notch_a, data[:, ch])
+            except Exception:
+                # If filtering fails for any reason, fall back to original channel
+                filtered[:, ch] = data[:, ch]
+
         return filtered
     
     def apply_car(self, data: np.ndarray) -> np.ndarray:
@@ -213,6 +255,10 @@ class NPGPreprocessor:
         
         # 2. Resample 256 → 250 Hz
         resampled = self.resample_signal(selected)
+        
+        # 2.5 Apply notch filter (powerline interference)
+        if self.apply_notch:
+            resampled = self.notch_filter(resampled)
         
         # 3. Bandpass filter (8-30 Hz)
         filtered = self.bandpass_filter(resampled)
