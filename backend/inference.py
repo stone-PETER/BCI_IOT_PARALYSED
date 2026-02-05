@@ -66,7 +66,7 @@ class BCIModelInference:
         
         # Load model
         if model_path is None:
-            model_path = code_dir / 'models' / 'eegnet_4class_motor_imagery.keras'
+            model_path = code_dir / 'models' / 'best' / 'eegnet_2class_bci2b.keras'
         
         self._load_model(model_path)
         

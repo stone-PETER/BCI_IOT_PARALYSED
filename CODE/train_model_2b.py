@@ -160,9 +160,13 @@ class EEGNetTrainer2B:
         """Copy the current best model to the standard 'best' filename."""
         try:
             import shutil
+            # Create best directory if it doesn't exist
+            best_dir = os.path.join(self.config['paths']['model_save_path'], 'best')
+            os.makedirs(best_dir, exist_ok=True)
+            
             best_model_path = os.path.join(
-                self.config['paths']['model_save_path'],
-                'best_eegnet_2class_bci2b.keras'
+                best_dir,
+                'eegnet_2class_bci2b.keras'
             )
             shutil.copy2(source_path, best_model_path)
             self.logger.info(f"Model copied to best model path: {best_model_path}")
@@ -393,7 +397,7 @@ def main():
         
         if results.get('is_new_best', False):
             print(f"🏆 NEW BEST ACCURACY! Previous: {results['previous_best']:.2%}")
-            print(f"🎯 Best model saved to: models/best_eegnet_2class_bci2b.keras")
+            print(f"🎯 Best model saved to: models/best/eegnet_2class_bci2b.keras")
         else:
             current_best = results.get('current_best', 0.0)
             print(f"📈 Current best accuracy: {current_best:.2%}")

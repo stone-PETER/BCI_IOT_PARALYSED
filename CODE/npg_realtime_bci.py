@@ -661,8 +661,8 @@ def main():
             model_path = latest_model
             print(f"🔍 Using latest model: {latest_model.name}")
         else:
-            # Fall back to original filename
-            model_path = models_dir / 'best_eegnet_2class_bci2b.keras'
+            # Fall back to best model
+            model_path = models_dir / 'best' / 'eegnet_2class_bci2b.keras'
     
     if not model_path.exists():
         print(f"❌ Error: Model not found: {model_path}")

@@ -268,7 +268,7 @@ class NPGInferenceEngine:
         
         # Load model
         if model_path is None:
-            model_path = Path(__file__).parent / 'models' / 'best_eegnet_2class_bci2b.keras'
+            model_path = Path(__file__).parent / 'models' / 'best' / 'eegnet_2class_bci2b.keras'
         
         self.model_path = Path(model_path)
         self.model = None
@@ -750,7 +750,7 @@ if __name__ == "__main__":
     print("="*70)
     
     # Check if model exists
-    model_path = Path(__file__).parent / 'models' / 'best_eegnet_2class_bci2b.keras'
+    model_path = Path(__file__).parent / 'models' / 'best' / 'eegnet_2class_bci2b.keras'
     
     if not model_path.exists():
         print(f"\n❌ Model not found: {model_path}")
