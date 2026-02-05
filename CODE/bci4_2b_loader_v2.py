@@ -111,18 +111,46 @@ class BCI4_2B_Loader:
         Returns:
             preprocessed epochs
         """
-        # Bandpass filter
-        if self.preprocess_config.get('filter', {}).get('enabled', False):
-            low = self.preprocess_config['filter'].get('low', 8)
-            high = self.preprocess_config['filter'].get('high', 30)
+        # Check master preprocessing switch
+        if not self.preprocess_config.get('enabled', True):
+            self.logger.debug("Preprocessing DISABLED (enabled=false)")
+            return epochs
+        
+        # Bandpass filter - support both flat and nested config structures
+        # Flat: filter_low, filter_high | Nested: filter.enabled, filter.low, filter.high
+        filter_low = self.preprocess_config.get('filter_low')
+        filter_high = self.preprocess_config.get('filter_high')
+        filter_nested = self.preprocess_config.get('filter', {})
+        
+        if filter_low is not None and filter_high is not None:
+            # Flat config structure (config_2b.yaml)
+            self.logger.debug(f"Applying bandpass filter: {filter_low}-{filter_high} Hz")
+            epochs = self._bandpass_filter(epochs, filter_low, filter_high)
+        elif filter_nested.get('enabled', False):
+            # Nested config structure (legacy)
+            low = filter_nested.get('low', 8)
+            high = filter_nested.get('high', 30)
+            self.logger.debug(f"Applying bandpass filter: {low}-{high} Hz")
             epochs = self._bandpass_filter(epochs, low, high)
         
-        # Common Average Reference
-        if self.preprocess_config.get('car', {}).get('enabled', False):
+        # Common Average Reference - support both flat and nested config
+        # Flat: apply_car | Nested: car.enabled
+        apply_car = self.preprocess_config.get('apply_car', False)
+        car_nested = self.preprocess_config.get('car', {})
+        
+        if apply_car or car_nested.get('enabled', False):
+            # Note: For 3-channel setup, Small Laplacian is better than CAR
+            # but we keep CAR for consistency with training data
+            self.logger.debug("Applying Common Average Reference")
             epochs = self._apply_car(epochs)
         
-        # Z-score normalization
-        if self.preprocess_config.get('zscore', {}).get('enabled', False):
+        # Z-score normalization - support both flat and nested config
+        # Flat: normalize | Nested: zscore.enabled
+        normalize_method = self.preprocess_config.get('normalize')
+        zscore_nested = self.preprocess_config.get('zscore', {})
+        
+        if normalize_method == 'zscore' or zscore_nested.get('enabled', False):
+            self.logger.debug("Applying z-score normalization")
             epochs = self._zscore_normalize(epochs)
         
         return epochs

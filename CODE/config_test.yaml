@@ -1,0 +1,36 @@
+logging:
+  format: '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+  level: INFO
+  log_filename: training_2b.log
+  save_to_file: true
+model:
+  D: 2
+  F1: 8
+  F2: 16
+  chans: 3
+  dropoutRate: 0.5
+  dropoutType: Dropout
+  kernLength: 64
+  nb_classes: 2
+  norm_rate: 0.25
+  samples: 1000
+paths:
+  data_path: BCI/bci4_2b
+  logs_path: ../logs
+  model_filename: eegnet_2class_bci2b.keras
+  model_save_path: models
+preprocessing:
+  apply_car: false
+  enabled: false
+  filter_high: 30
+  filter_low: 8
+  normalize: null
+training:
+  batch_size: 32
+  early_stopping:
+    monitor: val_accuracy
+    patience: 50
+    restore_best_weights: true
+  epochs: 1
+  learning_rate: 0.001
+  optimizer: adam

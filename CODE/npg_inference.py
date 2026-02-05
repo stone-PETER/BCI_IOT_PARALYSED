@@ -9,6 +9,9 @@ Features:
 - Leaky Integrator/Accumulator for stable command triggering
 - Neutral zone to filter uncertain predictions
 - Configurable thresholds and decay rates
+- FIXED: Temperature-scaled calibrated confidence
+- FIXED: Entropy-based uncertainty estimation
+- FIXED: Confidence-weighted smoothing
 """
 
 import numpy as np
@@ -20,6 +23,70 @@ from collections import deque
 from pathlib import Path
 
 from npg_preprocessor import NPGPreprocessor, SlidingWindowBuffer
+
+
+class CalibratedConfidence:
+    """
+    Temperature scaling for calibrated probability estimates.
+    
+    Raw softmax outputs are often overconfident. Temperature scaling
+    produces well-calibrated probabilities where confidence reflects
+    actual accuracy.
+    
+    Reference: Guo et al., "On Calibration of Modern Neural Networks" (2017)
+    """
+    
+    def __init__(self, temperature: float = 1.5):
+        """
+        Initialize calibrated confidence estimator.
+        
+        Args:
+            temperature: Scaling temperature (>1 reduces confidence, <1 increases)
+                        Default 1.5 typically works well for EEG classification
+        """
+        self.temperature = temperature
+    
+    def calibrate(self, logits: np.ndarray) -> np.ndarray:
+        """
+        Apply temperature scaling to logits.
+        
+        Args:
+            logits: Raw model output (before or after softmax)
+        
+        Returns:
+            Calibrated probabilities
+        """
+        # If input looks like probabilities (sums to ~1), convert to logits first
+        if np.abs(logits.sum() - 1.0) < 0.01:
+            # Convert probabilities back to log-odds
+            logits = np.log(logits + 1e-10)
+        
+        # Apply temperature scaling
+        scaled = logits / self.temperature
+        
+        # Softmax to get calibrated probabilities
+        exp_scaled = np.exp(scaled - np.max(scaled))  # Subtract max for numerical stability
+        calibrated = exp_scaled / exp_scaled.sum()
+        
+        return calibrated
+    
+    def compute_uncertainty(self, probabilities: np.ndarray) -> float:
+        """
+        Compute entropy-based uncertainty measure.
+        
+        Args:
+            probabilities: Probability distribution
+        
+        Returns:
+            Uncertainty score (0 = certain, 1 = maximum uncertainty)
+        """
+        # Shannon entropy
+        entropy = -np.sum(probabilities * np.log(probabilities + 1e-10))
+        
+        # Normalize by maximum entropy (uniform distribution)
+        max_entropy = np.log(len(probabilities))
+        
+        return entropy / max_entropy if max_entropy > 0 else 0.0
 
 
 class LeakyAccumulator:
@@ -154,6 +221,12 @@ class NPGInferenceEngine:
     Real-time inference engine for NPG Lite motor imagery classification.
     
     Uses trained EEGNet model for binary classification (left vs right hand).
+    
+    FIXES APPLIED:
+    - Temperature-scaled calibrated confidence
+    - Entropy-based uncertainty estimation  
+    - Confidence-weighted smoothing (not just majority vote)
+    - Consistent threshold handling
     """
     
     def __init__(self,
@@ -163,7 +236,9 @@ class NPGInferenceEngine:
                  use_accumulator: bool = True,
                  accumulator_threshold: float = 2.0,
                  accumulator_decay: float = 0.15,
-                 neutral_zone: Tuple[float, float] = (0.45, 0.55)):
+                 neutral_zone: Tuple[float, float] = (0.45, 0.55),
+                 temperature: float = 1.5,
+                 use_calibration: bool = True):
         """
         Initialize inference engine.
         
@@ -177,10 +252,13 @@ class NPGInferenceEngine:
             accumulator_threshold: Bucket level to trigger command (default: 2.0)
             accumulator_decay: Decay rate per update (default: 0.15)
             neutral_zone: (low, high) confidence range treated as uncertain
+            temperature: Temperature for calibrated confidence (default: 1.5)
+            use_calibration: Whether to use temperature-scaled confidence
         """
         self.confidence_threshold = confidence_threshold
         self.smoothing_window = smoothing_window
         self.use_accumulator = use_accumulator
+        self.use_calibration = use_calibration
         
         # Setup logging FIRST (before anything that might log)
         self.logger = logging.getLogger(__name__)
@@ -196,7 +274,10 @@ class NPGInferenceEngine:
         self.model = None
         self._load_model()
         
-        # Prediction smoothing buffer
+        # FIXED: Calibrated confidence estimator
+        self.calibrator = CalibratedConfidence(temperature=temperature)
+        
+        # FIXED: Prediction smoothing buffer with confidence-weighted history
         self.prediction_buffer = deque(maxlen=smoothing_window)
         
         # Leaky Accumulator for stable command triggering
@@ -217,12 +298,14 @@ class NPGInferenceEngine:
         self.class_counts = {class_name: 0 for class_name in self.class_names}
         self.prediction_times = deque(maxlen=100)
         self.triggered_commands = {class_name: 0 for class_name in self.class_names}
+        self.uncertainty_history = deque(maxlen=100)  # Track uncertainty
         
-        self.logger.info(f"NPG Inference Engine initialized:")
+        self.logger.info(f"NPG Inference Engine initialized (FIXED):")
         self.logger.info(f"  Model: {self.model_path.name}")
         self.logger.info(f"  Classes: {self.class_names}")
         self.logger.info(f"  Confidence threshold: {self.confidence_threshold}")
         self.logger.info(f"  Smoothing window: {self.smoothing_window}")
+        self.logger.info(f"  Temperature calibration: {temperature if use_calibration else 'disabled'}")
         self.logger.info(f"  Accumulator enabled: {self.use_accumulator}")
         if self.use_accumulator:
             self.logger.info(f"  Accumulator threshold: {accumulator_threshold}")
@@ -265,6 +348,8 @@ class NPGInferenceEngine:
         """
         Run inference on preprocessed data.
         
+        FIXED: Returns calibrated confidence and tracks uncertainty.
+        
         Args:
             preprocessed_data: Model-ready data (1, 3, 1000, 1)
         
@@ -277,15 +362,23 @@ class NPGInferenceEngine:
             # Run prediction
             prediction = self.model.predict(preprocessed_data, verbose=0)
             
-            # Extract class and confidence
-            probabilities = prediction[0]
+            # Extract raw probabilities
+            raw_probabilities = prediction[0]
             
             # Apply baseline bias correction if calibrated
             if self.baseline_bias is not None:
-                probabilities = self._apply_bias_correction(probabilities)
+                raw_probabilities = self._apply_bias_correction(raw_probabilities)
+            
+            # FIXED: Apply temperature scaling for calibrated confidence
+            if self.use_calibration:
+                probabilities = self.calibrator.calibrate(raw_probabilities)
+                uncertainty = self.calibrator.compute_uncertainty(probabilities)
+                self.uncertainty_history.append(uncertainty)
+            else:
+                probabilities = raw_probabilities
             
             class_idx = np.argmax(probabilities)
-            confidence = probabilities[class_idx]
+            confidence = float(probabilities[class_idx])
             class_name = self.class_names[class_idx]
             
             # Update statistics
@@ -298,11 +391,55 @@ class NPGInferenceEngine:
             pred_time = time.time() - start_time
             self.prediction_times.append(pred_time)
             
-            return class_idx, float(confidence), class_name
+            return class_idx, confidence, class_name
         
         except Exception as e:
             self.logger.error(f"Prediction error: {e}")
             return -1, 0.0, "ERROR"
+    
+    def predict_with_uncertainty(self, preprocessed_data: np.ndarray) -> Tuple[int, float, str, float]:
+        """
+        Run inference and return uncertainty estimate.
+        
+        Args:
+            preprocessed_data: Model-ready data (1, 3, 1000, 1)
+        
+        Returns:
+            Tuple of (class_idx, confidence, class_name, uncertainty)
+            uncertainty: 0 = very certain, 1 = very uncertain
+        """
+        start_time = time.time()
+        
+        try:
+            prediction = self.model.predict(preprocessed_data, verbose=0)
+            raw_probabilities = prediction[0]
+            
+            if self.baseline_bias is not None:
+                raw_probabilities = self._apply_bias_correction(raw_probabilities)
+            
+            # Calibrate and compute uncertainty
+            probabilities = self.calibrator.calibrate(raw_probabilities)
+            uncertainty = self.calibrator.compute_uncertainty(probabilities)
+            
+            class_idx = np.argmax(probabilities)
+            confidence = float(probabilities[class_idx])
+            class_name = self.class_names[class_idx]
+            
+            self.total_predictions += 1
+            self.uncertainty_history.append(uncertainty)
+            
+            if confidence >= self.confidence_threshold:
+                self.confident_predictions += 1
+                self.class_counts[class_name] += 1
+            
+            pred_time = time.time() - start_time
+            self.prediction_times.append(pred_time)
+            
+            return class_idx, confidence, class_name, uncertainty
+        
+        except Exception as e:
+            self.logger.error(f"Prediction error: {e}")
+            return -1, 0.0, "ERROR", 1.0
     
     def _apply_bias_correction(self, probabilities: np.ndarray) -> np.ndarray:
         """
@@ -399,6 +536,9 @@ class NPGInferenceEngine:
         """
         Run inference with temporal smoothing.
         
+        FIXED: Uses confidence-weighted voting instead of simple majority vote.
+        This gives more weight to high-confidence predictions.
+        
         Args:
             preprocessed_data: Model-ready data (1, 3, 1000, 1)
         
@@ -408,28 +548,43 @@ class NPGInferenceEngine:
         # Get raw prediction
         class_idx, confidence, class_name = self.predict(preprocessed_data)
         
-        # Add to buffer
+        # Add to buffer with confidence weight
         self.prediction_buffer.append((class_idx, confidence))
         
         # If buffer not full, return raw prediction
-        if len(self.prediction_buffer) < self.smoothing_window:
+        if len(self.prediction_buffer) < self.smoothing_window // 2:
             return class_idx, confidence, class_name
         
-        # Smooth predictions - majority vote
-        class_votes = [0, 0]
-        total_confidence = 0.0
+        # FIXED: Confidence-weighted voting (not just majority vote)
+        # This gives more importance to high-confidence predictions
+        class_weights = np.zeros(len(self.class_names))
+        total_weight = 0.0
         
         for idx, conf in self.prediction_buffer:
-            if idx >= 0:  # Valid prediction
-                class_votes[idx] += 1
-                total_confidence += conf
+            if idx >= 0 and idx < len(self.class_names):
+                # Weight by confidence squared (emphasize high confidence)
+                weight = conf ** 2
+                class_weights[idx] += weight
+                total_weight += conf
         
         # Determine smoothed prediction
-        smoothed_class_idx = np.argmax(class_votes)
-        smoothed_confidence = total_confidence / len(self.prediction_buffer)
+        smoothed_class_idx = np.argmax(class_weights)
+        
+        # Compute smoothed confidence as weighted average
+        if class_weights.sum() > 0:
+            # Normalize weights to get probability-like scores
+            normalized_weights = class_weights / class_weights.sum()
+            smoothed_confidence = normalized_weights[smoothed_class_idx]
+            
+            # Blend with average raw confidence for more stable output
+            avg_confidence = total_weight / len(self.prediction_buffer)
+            smoothed_confidence = 0.7 * smoothed_confidence + 0.3 * avg_confidence
+        else:
+            smoothed_confidence = 0.5
+        
         smoothed_class_name = self.class_names[smoothed_class_idx]
         
-        return smoothed_class_idx, smoothed_confidence, smoothed_class_name
+        return smoothed_class_idx, float(smoothed_confidence), smoothed_class_name
     
     def predict_with_accumulator(self, preprocessed_data: np.ndarray) -> Tuple[int, float, str, bool]:
         """
@@ -506,12 +661,19 @@ class NPGInferenceEngine:
         """
         Get inference statistics.
         
+        FIXED: Includes uncertainty metrics.
+        
         Returns:
             Dictionary with statistics
         """
         avg_pred_time = np.mean(self.prediction_times) if self.prediction_times else 0.0
         confidence_rate = (self.confident_predictions / self.total_predictions * 100
                           if self.total_predictions > 0 else 0.0)
+        
+        # FIXED: Compute uncertainty statistics
+        avg_uncertainty = np.mean(self.uncertainty_history) if self.uncertainty_history else 0.5
+        min_uncertainty = np.min(self.uncertainty_history) if self.uncertainty_history else 0.5
+        max_uncertainty = np.max(self.uncertainty_history) if self.uncertainty_history else 0.5
         
         stats = {
             'total_predictions': self.total_predictions,
@@ -520,7 +682,12 @@ class NPGInferenceEngine:
             'class_distribution': self.class_counts.copy(),
             'triggered_commands': self.triggered_commands.copy(),
             'avg_prediction_time_ms': avg_pred_time * 1000,
-            'predictions_per_second': 1.0 / avg_pred_time if avg_pred_time > 0 else 0.0
+            'predictions_per_second': 1.0 / avg_pred_time if avg_pred_time > 0 else 0.0,
+            'uncertainty': {
+                'average': float(avg_uncertainty),
+                'min': float(min_uncertainty),
+                'max': float(max_uncertainty)
+            }
         }
         
         # Add accumulator stats if enabled
@@ -537,6 +704,12 @@ class NPGInferenceEngine:
         else:
             stats['baseline_bias'] = {'calibrated': False}
         
+        # Add temperature calibration info
+        stats['calibration'] = {
+            'enabled': self.use_calibration,
+            'temperature': self.calibrator.temperature if self.use_calibration else None
+        }
+        
         return stats
     
     def reset_statistics(self):
@@ -547,8 +720,25 @@ class NPGInferenceEngine:
         self.triggered_commands = {class_name: 0 for class_name in self.class_names}
         self.prediction_times.clear()
         self.prediction_buffer.clear()
+        self.uncertainty_history.clear()
         if self.use_accumulator:
             self.accumulator.reset()
+    
+    def set_temperature(self, temperature: float):
+        """
+        Update temperature scaling parameter.
+        
+        Args:
+            temperature: New temperature value (>1 reduces confidence, <1 increases)
+        """
+        self.calibrator.temperature = temperature
+        self.logger.info(f"Temperature updated to {temperature}")
+    
+    def get_average_uncertainty(self) -> float:
+        """Get average uncertainty over recent predictions."""
+        if self.uncertainty_history:
+            return float(np.mean(self.uncertainty_history))
+        return 0.5
 
 
 if __name__ == "__main__":

@@ -3,6 +3,13 @@ NPG Lite Real-time BCI System
 Complete integration: NPG Lite → Preprocessing → Inference → Commands
 
 Real-time motor imagery classification for paralysis assistance
+
+FIXES APPLIED:
+- Correct window buffer size (2000 samples @ 500 Hz = 4 seconds)
+- Consistent sampling rate handling (500 Hz input, 250 Hz after preprocessing)
+- Added baseline calibration routine
+- Synced parameters across all components
+- Added uncertainty monitoring
 """
 
 import numpy as np
@@ -20,13 +27,30 @@ from npg_preprocessor import NPGPreprocessor, SlidingWindowBuffer
 from npg_inference import NPGInferenceEngine
 
 
+# === FIXED: Consistent parameters across all components ===
+INPUT_SAMPLING_RATE = 500   # NPG Lite via Chords-Python
+OUTPUT_SAMPLING_RATE = 250  # Model trained at this rate
+EPOCH_DURATION = 4.0        # 4 seconds per classification
+N_CHANNELS = 3              # C3, Cz, C4
+
+# Calculated values
+INPUT_EPOCH_SAMPLES = int(EPOCH_DURATION * INPUT_SAMPLING_RATE)   # 2000 @ 500 Hz
+OUTPUT_EPOCH_SAMPLES = int(EPOCH_DURATION * OUTPUT_SAMPLING_RATE) # 1000 @ 250 Hz
+
+
 class NPGRealtimeBCI:
     """
     Complete real-time BCI system for NPG Lite.
     
     Pipeline:
-    NPG Lite (256 Hz, 6 ch) → Resample (250 Hz) → Select channels (C3, Cz, C4) →
-    Bandpass (8-30 Hz) → CAR → Z-score → Model → Classification → Command
+    NPG Lite (500 Hz, 3 ch) → Anti-alias → Resample (250 Hz) → 
+    Notch → Small Laplacian → Bandpass (8-30 Hz) → Z-score → Model → Command
+    
+    FIXES:
+    - Correct window sizes matching input rate
+    - Consistent parameter handling
+    - Baseline calibration support
+    - Uncertainty tracking
     """
     
     def __init__(self,
@@ -38,7 +62,9 @@ class NPGRealtimeBCI:
                  use_accumulator: bool = True,
                  accumulator_threshold: float = 2.0,
                  accumulator_decay: float = 0.15,
-                 neutral_zone: tuple = (0.45, 0.55)):
+                 neutral_zone: tuple = (0.45, 0.55),
+                 temperature: float = 1.5,
+                 use_calibration: bool = True):
         """
         Initialize real-time BCI system.
         
@@ -52,6 +78,8 @@ class NPGRealtimeBCI:
             accumulator_threshold: Bucket level to trigger command (default: 2.0)
             accumulator_decay: Decay rate per update (default: 0.15)
             neutral_zone: Confidence range treated as uncertain (default: 0.45-0.55)
+            temperature: Temperature for calibrated confidence (default: 1.5)
+            use_calibration: Whether to use temperature-scaled confidence
         """
         self.simulate = simulate
         self.confidence_threshold = confidence_threshold
@@ -62,8 +90,14 @@ class NPGRealtimeBCI:
         self.logger = logging.getLogger(__name__)
         
         self.logger.info("="*70)
-        self.logger.info("NPG Lite Real-time BCI System")
+        self.logger.info("NPG Lite Real-time BCI System (FIXED)")
         self.logger.info("="*70)
+        self.logger.info(f"Configuration:")
+        self.logger.info(f"  Input rate: {INPUT_SAMPLING_RATE} Hz (NPG Lite via Chords)")
+        self.logger.info(f"  Output rate: {OUTPUT_SAMPLING_RATE} Hz (model)")
+        self.logger.info(f"  Epoch duration: {EPOCH_DURATION}s")
+        self.logger.info(f"  Input epoch: {INPUT_EPOCH_SAMPLES} samples")
+        self.logger.info(f"  Output epoch: {OUTPUT_EPOCH_SAMPLES} samples")
         
         # Initialize components
         self.logger.info("\n1. Initializing components...")
@@ -71,16 +105,22 @@ class NPGRealtimeBCI:
         # NPG adapter
         if simulate:
             self.logger.info("   Using SIMULATOR mode")
-            self.adapter = NPGLiteSimulator()
+            self.adapter = NPGLiteSimulator(sampling_rate=INPUT_SAMPLING_RATE)
         else:
             self.logger.info("   Using HARDWARE mode")
-            self.adapter = NPGLiteAdapter()
+            self.adapter = NPGLiteAdapter(sampling_rate=INPUT_SAMPLING_RATE)
         
-        # Preprocessor
-        self.preprocessor = NPGPreprocessor()
-        self.logger.info("   ✅ Preprocessor ready")
+        # FIXED: Preprocessor with correct parameters
+        self.preprocessor = NPGPreprocessor(
+            input_rate=INPUT_SAMPLING_RATE,
+            output_rate=OUTPUT_SAMPLING_RATE,
+            epoch_duration=EPOCH_DURATION,
+            use_laplacian=True,  # Use small Laplacian (not CAR)
+            realtime_mode=True
+        )
+        self.logger.info("   ✅ Preprocessor ready (small Laplacian spatial filter)")
         
-        # Inference engine with Leaky Accumulator
+        # Inference engine with calibration
         self.inference = NPGInferenceEngine(
             model_path=model_path,
             confidence_threshold=confidence_threshold,
@@ -88,18 +128,20 @@ class NPGRealtimeBCI:
             use_accumulator=use_accumulator,
             accumulator_threshold=accumulator_threshold,
             accumulator_decay=accumulator_decay,
-            neutral_zone=neutral_zone
+            neutral_zone=neutral_zone,
+            temperature=temperature,
+            use_calibration=use_calibration
         )
-        self.logger.info("   ✅ Inference engine ready")
+        self.logger.info("   ✅ Inference engine ready (temperature-calibrated confidence)")
         
-        # Sliding window buffer
-        window_size = 1024  # 4 seconds @ 256 Hz
-        stride = int(window_size * (1 - window_overlap))
+        # FIXED: Sliding window buffer with correct size for input rate
+        stride = int(INPUT_EPOCH_SAMPLES * (1 - window_overlap))
         self.window_buffer = SlidingWindowBuffer(
-            window_size=window_size,
-            overlap=window_overlap
+            window_size=INPUT_EPOCH_SAMPLES,  # 2000 samples @ 500 Hz
+            overlap=window_overlap,
+            sampling_rate=INPUT_SAMPLING_RATE
         )
-        self.logger.info(f"   ✅ Window buffer ready (overlap={window_overlap:.0%})")
+        self.logger.info(f"   ✅ Window buffer ready ({INPUT_EPOCH_SAMPLES} samples, {window_overlap:.0%} overlap)")
         
         # Command tracking
         self.last_command = None
@@ -110,6 +152,9 @@ class NPGRealtimeBCI:
         self.processing_times = deque(maxlen=100)
         self.total_epochs_processed = 0
         self.start_time = None
+        
+        # Try to load saved baseline bias
+        self._load_baseline_bias()
         
         self.logger.info("="*70)
     
@@ -168,10 +213,11 @@ class NPGRealtimeBCI:
     
     def _processing_loop(self):
         """Main processing loop."""
-        warmup_samples = 1024  # Need 4 seconds for first window
-        chunk_size = 128  # Process in smaller chunks after warmup
+        # FIXED: Use correct sample counts for 500 Hz input
+        warmup_samples = INPUT_EPOCH_SAMPLES  # 2000 samples = 4 seconds @ 500 Hz
+        chunk_size = int(INPUT_SAMPLING_RATE * 0.25)  # 125 samples = 0.25 seconds
         
-        self.logger.info(f"Warming up... collecting {warmup_samples} samples")
+        self.logger.info(f"Warming up... collecting {warmup_samples} samples ({EPOCH_DURATION}s)")
         
         # Initial warmup phase
         warmup_complete = False
@@ -189,6 +235,8 @@ class NPGRealtimeBCI:
                     if data is not None and len(data) >= warmup_samples:
                         warmup_complete = True
                         self.logger.info(f"✅ Warmup complete! Starting continuous processing...")
+                        # Reset filter states for clean start
+                        self.preprocessor.reset_filters()
                     else:
                         # Check for timeout and show progress
                         elapsed = time.time() - warmup_start
@@ -212,6 +260,11 @@ class NPGRealtimeBCI:
                         self.logger.debug(f"Waiting for data... buffer size: {buffer_size}")
                     time.sleep(0.1)
                     continue
+                
+                # Verify channel count
+                if data.shape[1] != N_CHANNELS:
+                    self.logger.warning(f"Expected {N_CHANNELS} channels, got {data.shape[1]}")
+                    data = data[:, :N_CHANNELS]  # Trim to expected channels
                 
                 # Add to window buffer
                 self.window_buffer.add_samples(data)
@@ -241,13 +294,23 @@ class NPGRealtimeBCI:
         Process a single 4-second epoch.
         
         Args:
-            epoch_data: Raw data (1024, 6) @ 256 Hz
+            epoch_data: Raw data (2000 samples @ 500 Hz, 3 channels)
         """
         start_time = time.time()
         
         try:
-            # Preprocess
+            # Verify input shape
+            expected_samples = INPUT_EPOCH_SAMPLES
+            if epoch_data.shape[0] < expected_samples * 0.9:  # Allow 10% tolerance
+                self.logger.warning(f"Epoch too short: {epoch_data.shape[0]} samples, expected ~{expected_samples}")
+                return
+            
+            # Preprocess (handles resampling, filtering, normalization)
             preprocessed = self.preprocessor.preprocess_for_model(epoch_data)
+            
+            # Verify output shape
+            if preprocessed.shape != (1, N_CHANNELS, OUTPUT_EPOCH_SAMPLES, 1):
+                self.logger.warning(f"Preprocessed shape mismatch: {preprocessed.shape}")
             
             # Inference with accumulator (returns triggered command or UNCERTAIN)
             if self.use_accumulator:
@@ -292,7 +355,7 @@ class NPGRealtimeBCI:
                 self._log_status()
         
         except Exception as e:
-            self.logger.error(f"Epoch processing error: {e}")
+            self.logger.error(f"Epoch processing error: {e}", exc_info=True)
     
     def _log_command(self, command: str, confidence: float, proc_time: float):
         """Log a new command."""
@@ -328,11 +391,15 @@ class NPGRealtimeBCI:
                 right_pct = status['buckets']['RIGHT_HAND']['percent_full']
                 bucket_info = f" | Buckets: L={left_pct:3.0f}% R={right_pct:3.0f}%"
         
+        # Add uncertainty info
+        avg_uncertainty = self.inference.get_average_uncertainty()
+        uncertainty_info = f" | Uncertainty: {avg_uncertainty:.1%}"
+        
         self.logger.info(
             f"📊 Status | "
             f"Epochs: {self.total_epochs_processed:4} | "
             f"Rate: {epochs_per_sec:4.1f}/s | "
-            f"Avg time: {avg_proc_time*1000:5.1f}ms{bucket_info}"
+            f"Avg time: {avg_proc_time*1000:5.1f}ms{bucket_info}{uncertainty_info}"
         )
     
     def stop(self):
@@ -584,7 +651,18 @@ def main():
     if args.model:
         model_path = Path(args.model)
     else:
-        model_path = Path(__file__).parent / 'models' / 'best_eegnet_2class_bci2b.keras'
+        # Try to find the latest timestamped model
+        models_dir = Path(__file__).parent / 'models'
+        best_models = list(models_dir.glob('best_eegnet_2class_bci2b_*.keras'))
+        
+        if best_models:
+            # Sort by filename (timestamp) and get the latest
+            latest_model = sorted(best_models, key=lambda x: x.name)[-1]
+            model_path = latest_model
+            print(f"🔍 Using latest model: {latest_model.name}")
+        else:
+            # Fall back to original filename
+            model_path = models_dir / 'best_eegnet_2class_bci2b.keras'
     
     if not model_path.exists():
         print(f"❌ Error: Model not found: {model_path}")

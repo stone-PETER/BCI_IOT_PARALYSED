@@ -8,8 +8,10 @@ import numpy as np
 import yaml
 import logging
 import os
+import json
 from datetime import datetime
 from pathlib import Path
+import shutil
 
 import tensorflow as tf
 from tensorflow.keras.callbacks import (
@@ -31,6 +33,9 @@ class EEGNetTrainer2B:
         # Get script directory
         script_dir = Path(__file__).parent.resolve()
         config_path = script_dir / config_path
+        
+        # Best accuracy tracking
+        self.best_accuracy_file = script_dir / "models" / "best_accuracy.json"
         
         with open(config_path, 'r') as file:
             self.config = yaml.safe_load(file)
@@ -120,8 +125,61 @@ class EEGNetTrainer2B:
             'y_test': y_test
         }
     
-    def create_callbacks(self):
+    def load_best_accuracy(self):
+        """Load the best accuracy achieved so far."""
+        try:
+            best_accuracy_file = Path(self.config['paths']['model_save_path']) / "best_accuracy.json"
+            if best_accuracy_file.exists():
+                with open(best_accuracy_file, 'r') as f:
+                    data = json.load(f)
+                return data['best_accuracy'], data['timestamp'], data['model_filename']
+            else:
+                return 0.0, None, None
+        except Exception as e:
+            self.logger.warning(f"Could not load best accuracy: {e}")
+            return 0.0, None, None
+    
+    def save_best_accuracy(self, accuracy, timestamp, model_filename):
+        """Save the new best accuracy."""
+        try:
+            best_accuracy_file = Path(self.config['paths']['model_save_path']) / "best_accuracy.json"
+            os.makedirs(best_accuracy_file.parent, exist_ok=True)
+            data = {
+                'best_accuracy': float(accuracy),
+                'timestamp': timestamp,
+                'model_filename': model_filename,
+                'updated_at': datetime.now().isoformat()
+            }
+            with open(best_accuracy_file, 'w') as f:
+                json.dump(data, f, indent=2)
+            self.logger.info(f"New best accuracy saved: {accuracy:.4f}")
+        except Exception as e:
+            self.logger.error(f"Could not save best accuracy: {e}")
+    
+    def save_as_best_model(self, source_path, timestamp):
+        """Copy the current best model to the standard 'best' filename."""
+        try:
+            import shutil
+            best_model_path = os.path.join(
+                self.config['paths']['model_save_path'],
+                'best_eegnet_2class_bci2b.keras'
+            )
+            shutil.copy2(source_path, best_model_path)
+            self.logger.info(f"Model copied to best model path: {best_model_path}")
+            return best_model_path
+        except Exception as e:
+            self.logger.error(f"Could not copy to best model: {e}")
+            return None
+    
+    def create_callbacks(self, timestamp: str = None):
         """Create training callbacks."""
+        if timestamp is None:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # Generate timestamped filename
+        base_filename = self.config['paths']['model_filename'].replace('.keras', '')
+        timestamped_filename = f"{base_filename}_{timestamp}.keras"
+        
         callbacks = []
         
         # Early stopping
@@ -133,10 +191,10 @@ class EEGNetTrainer2B:
         )
         callbacks.append(early_stopping)
         
-        # Model checkpoint
+        # Model checkpoint with timestamp
         checkpoint_path = os.path.join(
             self.config['paths']['model_save_path'],
-            'best_' + self.config['paths']['model_filename']
+            'best_' + timestamped_filename
         )
         model_checkpoint = ModelCheckpoint(
             checkpoint_path,
@@ -146,6 +204,10 @@ class EEGNetTrainer2B:
             verbose=1
         )
         callbacks.append(model_checkpoint)
+        
+        # Store the timestamped filename for later use
+        self.timestamped_filename = timestamped_filename
+        self.checkpoint_path = checkpoint_path
         
         # Reduce learning rate
         reduce_lr = ReduceLROnPlateau(
@@ -189,11 +251,10 @@ class EEGNetTrainer2B:
         self.logger.info("Model Architecture:")
         self.logger.info(f"\n{self.eegnet.get_model_summary()}")
         
-        # Create callbacks
-        callbacks = self.create_callbacks()
-        
-        # Train
+        # Create callbacks with timestamp
         start_time = datetime.now()
+        self.timestamp = start_time.strftime("%Y%m%d_%H%M%S")
+        callbacks = self.create_callbacks(self.timestamp)
         self.logger.info("Starting training...")
         
         self.history = self.model.fit(
@@ -208,8 +269,10 @@ class EEGNetTrainer2B:
         training_time = datetime.now() - start_time
         self.logger.info(f"Training completed in: {training_time}")
         
-        # Save final model
-        final_model_path = self.eegnet.save_model()
+        # Save final model with timestamp
+        final_model_path = self.eegnet.save_model(
+            os.path.join(self.config['paths']['model_save_path'], self.timestamped_filename)
+        )
         self.logger.info(f"Final model saved to: {final_model_path}")
         
         return self.history.history
@@ -256,6 +319,26 @@ class EEGNetTrainer2B:
             'confusion_matrix': confusion_mat.tolist(),
             'target_names': target_names
         }
+        
+        # Check if this is the best accuracy achieved so far
+        best_accuracy, best_timestamp, best_model_filename = self.load_best_accuracy()
+        current_accuracy = float(test_accuracy)
+        
+        if current_accuracy > best_accuracy:
+            self.logger.info(f"🎉 NEW BEST ACCURACY! {current_accuracy:.4f} > {best_accuracy:.4f}")
+            
+            # Save as best model
+            if hasattr(self, 'checkpoint_path') and os.path.exists(self.checkpoint_path):
+                best_model_path = self.save_as_best_model(self.checkpoint_path, self.timestamp)
+                if best_model_path:
+                    # Update best accuracy record
+                    self.save_best_accuracy(current_accuracy, self.timestamp, self.timestamped_filename)
+                    results['is_new_best'] = True
+                    results['previous_best'] = best_accuracy
+        else:
+            self.logger.info(f"Current accuracy {current_accuracy:.4f} did not beat best {best_accuracy:.4f}")
+            results['is_new_best'] = False
+            results['current_best'] = best_accuracy
         
         results_path = os.path.join(
             self.config['paths']['logs_path'],
@@ -307,7 +390,15 @@ def main():
         print("\n" + "="*70)
         print("✅ Training completed successfully!")
         print(f"📊 Test Accuracy: {results['test_accuracy']:.2%}")
-        print(f"🎯 Model saved to: models/best_eegnet_2class_bci2b.keras")
+        
+        if results.get('is_new_best', False):
+            print(f"🏆 NEW BEST ACCURACY! Previous: {results['previous_best']:.2%}")
+            print(f"🎯 Best model saved to: models/best_eegnet_2class_bci2b.keras")
+        else:
+            current_best = results.get('current_best', 0.0)
+            print(f"📈 Current best accuracy: {current_best:.2%}")
+        
+        print(f"💾 Timestamped model: {trainer.checkpoint_path}")
         print("="*70)
         
     except Exception as e:
