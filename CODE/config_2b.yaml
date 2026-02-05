@@ -32,7 +32,7 @@ preprocessing:
   # Signal preprocessing - DISABLED to match original 73.64% model
   # The original model was trained on RAW data (no preprocessing applied)
   # This is because the loader expected nested config structure but got flat
-  enabled: false  # Master switch for all preprocessing
+  enabled: false # Master switch for all preprocessing
   filter_low: 8 # Hz (not applied if enabled=false)
   filter_high: 30 # Hz
   apply_car: false # Common Average Reference - disabled
