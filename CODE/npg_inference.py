@@ -89,6 +89,143 @@ class CalibratedConfidence:
         return entropy / max_entropy if max_entropy > 0 else 0.0
 
 
+class SmileyFeedback:
+    """
+    "Smiley Feedback" Running Integral Classifier
+    
+    Implements the BCI Competition strategy of integrating probability outputs
+    over a 2-second window to reduce flickering and produce stable commands.
+    
+    Instead of acting on single-frame predictions, this accumulates probabilities
+    over multiple predictions and only triggers commands when the integrated sum
+    exceeds a high threshold.
+    
+    Reference: Similar to the "Smiley" paradigm used in BCI Competition where
+    visual feedback (smiley face position/curvature) was mapped to continuous
+    integrated classifier output rather than instantaneous predictions.
+    
+    Key parameters:
+    - Window duration: 2 seconds (typically 4-5 predictions at 2.2 Hz)
+    - Integration: Sum probabilities for each class over window
+    - Threshold: High threshold (e.g., 3.5 out of 5) to ensure consistency
+    """
+    
+    def __init__(self,
+                 n_classes: int = 2,
+                 window_duration: float = 2.0,
+                 prediction_rate: float = 2.2,
+                 trigger_threshold: float = 3.5,
+                 reset_on_trigger: bool = False):
+        """
+        Initialize Smiley Feedback integrator.
+        
+        Args:
+            n_classes: Number of output classes
+            window_duration: Integration window duration in seconds
+            prediction_rate: Expected prediction rate (epochs/second)
+            trigger_threshold: Sum threshold to trigger command
+            reset_on_trigger: Whether to reset buffer after triggering
+        """
+        self.n_classes = n_classes
+        self.window_duration = window_duration
+        self.prediction_rate = prediction_rate
+        self.trigger_threshold = trigger_threshold
+        self.reset_on_trigger = reset_on_trigger
+        
+        # Calculate buffer size (number of predictions in window)
+        self.buffer_size = max(3, int(window_duration * prediction_rate))
+        
+        # Circular buffer of probability distributions
+        self.probability_buffer = deque(maxlen=self.buffer_size)
+        
+        # Statistics
+        self.update_count = 0
+        self.trigger_count = 0
+        self.last_triggered_class = -1
+        self.last_trigger_sum = 0.0
+        
+        # Running integral (sum of probabilities)
+        self.integral = np.zeros(n_classes)
+    
+    def update(self, probabilities: np.ndarray) -> Tuple[int, bool, float]:
+        """
+        Update the running integral with new probability distribution.
+        
+        Args:
+            probabilities: Probability distribution from classifier [p_left, p_right, ...]
+        
+        Returns:
+            Tuple of (triggered_class, is_triggered, winning_sum)
+            - triggered_class: Class index that triggered (-1 if none)
+            - is_triggered: Whether threshold was exceeded
+            - winning_sum: Integrated sum of winning class
+        """
+        self.update_count += 1
+        
+        # Add new probabilities to buffer
+        self.probability_buffer.append(probabilities.copy())
+        
+        # Not enough data yet
+        if len(self.probability_buffer) < self.buffer_size:
+            return -1, False, 0.0
+        
+        # Compute running integral (sum over window)
+        self.integral = np.sum(self.probability_buffer, axis=0)
+        
+        # Find winning class
+        winning_class = np.argmax(self.integral)
+        winning_sum = self.integral[winning_class]
+        
+        # Check if threshold exceeded
+        is_triggered = winning_sum >= self.trigger_threshold
+        
+        if is_triggered:
+            self.trigger_count += 1
+            self.last_triggered_class = winning_class
+            self.last_trigger_sum = winning_sum
+            
+            # Optionally reset buffer to prevent repeated triggers
+            if self.reset_on_trigger:
+                self.probability_buffer.clear()
+                self.integral = np.zeros(self.n_classes)
+            
+            return winning_class, True, winning_sum
+        
+        return -1, False, winning_sum
+    
+    def get_integral_values(self) -> np.ndarray:
+        """Get current integrated probability sums."""
+        return self.integral.copy()
+    
+    def get_buffer_fill(self) -> float:
+        """Get buffer fill percentage (0.0 to 1.0)."""
+        return len(self.probability_buffer) / self.buffer_size
+    
+    def reset(self):
+        """Clear the probability buffer and reset integral."""
+        self.probability_buffer.clear()
+        self.integral = np.zeros(self.n_classes)
+        self.last_triggered_class = -1
+        self.last_trigger_sum = 0.0
+    
+    def get_statistics(self) -> Dict:
+        """Get running statistics."""
+        trigger_rate = self.trigger_count / max(1, self.update_count)
+        
+        return {
+            'window_duration_sec': self.window_duration,
+            'buffer_size': self.buffer_size,
+            'buffer_fill': len(self.probability_buffer),
+            'trigger_threshold': self.trigger_threshold,
+            'total_updates': self.update_count,
+            'total_triggers': self.trigger_count,
+            'trigger_rate': trigger_rate,
+            'last_triggered_class': self.last_triggered_class,
+            'last_trigger_sum': float(self.last_trigger_sum),
+            'current_integral': self.integral.tolist()
+        }
+
+
 class LeakyAccumulator:
     """
     Leaky Integrator/Accumulator for stable BCI command triggering.
@@ -238,7 +375,11 @@ class NPGInferenceEngine:
                  accumulator_decay: float = 0.15,
                  neutral_zone: Tuple[float, float] = (0.45, 0.55),
                  temperature: float = 1.5,
-                 use_calibration: bool = True):
+                 use_calibration: bool = True,
+                 use_smiley_feedback: bool = False,
+                 smiley_window_duration: float = 2.0,
+                 smiley_threshold: float = 3.5,
+                 smiley_prediction_rate: float = 2.2):
         """
         Initialize inference engine.
         
@@ -254,11 +395,16 @@ class NPGInferenceEngine:
             neutral_zone: (low, high) confidence range treated as uncertain
             temperature: Temperature for calibrated confidence (default: 1.5)
             use_calibration: Whether to use temperature-scaled confidence
+            use_smiley_feedback: Whether to use Smiley Feedback running integral
+            smiley_window_duration: Integration window in seconds (default: 2.0)
+            smiley_threshold: Sum threshold to trigger (default: 3.5)
+            smiley_prediction_rate: Expected prediction rate in Hz (default: 2.2)
         """
         self.confidence_threshold = confidence_threshold
         self.smoothing_window = smoothing_window
         self.use_accumulator = use_accumulator
         self.use_calibration = use_calibration
+        self.use_smiley_feedback = use_smiley_feedback
         
         # Setup logging FIRST (before anything that might log)
         self.logger = logging.getLogger(__name__)
@@ -279,6 +425,18 @@ class NPGInferenceEngine:
         
         # FIXED: Prediction smoothing buffer with confidence-weighted history
         self.prediction_buffer = deque(maxlen=smoothing_window)
+        
+        # Smiley Feedback running integral (optional)
+        if use_smiley_feedback:
+            self.smiley_feedback = SmileyFeedback(
+                n_classes=len(self.class_names),
+                window_duration=smiley_window_duration,
+                prediction_rate=smiley_prediction_rate,
+                trigger_threshold=smiley_threshold,
+                reset_on_trigger=False  # Keep accumulating for sustained commands
+            )
+        else:
+            self.smiley_feedback = None
         
         # Leaky Accumulator for stable command triggering
         self.accumulator = LeakyAccumulator(
@@ -306,6 +464,9 @@ class NPGInferenceEngine:
         self.logger.info(f"  Confidence threshold: {self.confidence_threshold}")
         self.logger.info(f"  Smoothing window: {self.smoothing_window}")
         self.logger.info(f"  Temperature calibration: {temperature if use_calibration else 'disabled'}")
+        self.logger.info(f"  Smiley Feedback: {self.use_smiley_feedback}")
+        if self.use_smiley_feedback:
+            self.logger.info(f"    Window: {smiley_window_duration}s, Threshold: {smiley_threshold}, Rate: {smiley_prediction_rate} Hz")
         self.logger.info(f"  Accumulator enabled: {self.use_accumulator}")
         if self.use_accumulator:
             self.logger.info(f"  Accumulator threshold: {accumulator_threshold}")
@@ -630,6 +791,76 @@ class NPGInferenceEngine:
         else:
             return -1, confidence, "UNCERTAIN", False
     
+    def predict_with_smiley_feedback(self, preprocessed_data: np.ndarray) -> Tuple[int, float, str, bool, float]:
+        """
+        Run inference with Smiley Feedback running integral.
+        
+        This implements the BCI Competition strategy of integrating probability
+        outputs over a 2-second window. Commands are only triggered when the
+        integrated sum exceeds a high threshold, eliminating flickering.
+        
+        Flow:
+        1. Get raw prediction with probabilities
+        2. Feed full probability distribution to running integral
+        3. Check if any class exceeds the threshold
+        4. Only trigger command when threshold is met
+        
+        Args:
+            preprocessed_data: Model-ready data (1, 3, 1000, 1)
+        
+        Returns:
+            Tuple of (class_idx, confidence, class_name, is_triggered, winning_sum)
+            - class_idx: -1 if no command triggered, else predicted class
+            - confidence: Raw prediction confidence for this frame
+            - class_name: "UNCERTAIN" if no trigger, else class name
+            - is_triggered: True if running integral exceeded threshold
+            - winning_sum: Current integrated sum of winning class
+        """
+        if not self.use_smiley_feedback or self.smiley_feedback is None:
+            # Fall back to regular accumulator-based prediction
+            class_idx, confidence, class_name, is_triggered = self.predict_with_accumulator(preprocessed_data)
+            return class_idx, confidence, class_name, is_triggered, 0.0
+        
+        start_time = time.time()
+        
+        try:
+            # Get raw prediction with full probability distribution
+            prediction = self.model.predict(preprocessed_data, verbose=0)
+            raw_probabilities = prediction[0]
+            
+            # Apply bias correction if available
+            if self.baseline_bias is not None:
+                raw_probabilities = self._apply_bias_correction(raw_probabilities)
+            
+            # Calibrate probabilities for better confidence estimates
+            if self.use_calibration:
+                probabilities = self.calibrator.calibrate(raw_probabilities)
+            else:
+                probabilities = raw_probabilities
+            
+            # Get current frame prediction for reference
+            class_idx = np.argmax(probabilities)
+            confidence = float(probabilities[class_idx])
+            
+            # Update Smiley Feedback running integral
+            triggered_class, is_triggered, winning_sum = self.smiley_feedback.update(probabilities)
+            
+            # Update statistics
+            self.total_predictions += 1
+            pred_time = time.time() - start_time
+            self.prediction_times.append(pred_time)
+            
+            if is_triggered:
+                triggered_name = self.class_names[triggered_class]
+                self.triggered_commands[triggered_name] += 1
+                return triggered_class, confidence, triggered_name, True, winning_sum
+            else:
+                return -1, confidence, "UNCERTAIN", False, winning_sum
+        
+        except Exception as e:
+            self.logger.error(f"Smiley Feedback prediction error: {e}")
+            return -1, 0.0, "ERROR", False, 0.0
+    
     def get_accumulator_status(self) -> Dict:
         """
         Get current accumulator bucket levels and status.
@@ -655,6 +886,38 @@ class NPGInferenceEngine:
             },
             'decay_rate': self.accumulator.decay_rate,
             'neutral_zone': self.accumulator.neutral_zone
+        }
+    
+    def get_smiley_feedback_status(self) -> Dict:
+        """
+        Get current Smiley Feedback running integral status.
+        
+        Returns:
+            Dictionary with integral values and status for each class
+        """
+        if not self.use_smiley_feedback or self.smiley_feedback is None:
+            return {'enabled': False}
+        
+        integral_values = self.smiley_feedback.get_integral_values()
+        threshold = self.smiley_feedback.trigger_threshold
+        buffer_fill = self.smiley_feedback.get_buffer_fill()
+        
+        return {
+            'enabled': True,
+            'window_duration_sec': self.smiley_feedback.window_duration,
+            'buffer_size': self.smiley_feedback.buffer_size,
+            'buffer_fill_count': len(self.smiley_feedback.probability_buffer),
+            'buffer_fill_percent': buffer_fill * 100,
+            'trigger_threshold': threshold,
+            'integral_sums': {
+                self.class_names[i]: {
+                    'sum': float(integral_values[i]),
+                    'threshold': threshold,
+                    'percent_to_trigger': float(integral_values[i] / threshold * 100)
+                }
+                for i in range(len(self.class_names))
+            },
+            'statistics': self.smiley_feedback.get_statistics()
         }
     
     def get_statistics(self) -> Dict:
@@ -694,6 +957,10 @@ class NPGInferenceEngine:
         if self.use_accumulator:
             stats['accumulator'] = self.accumulator.get_statistics()
         
+        # Add smiley feedback stats if enabled
+        if self.use_smiley_feedback and self.smiley_feedback is not None:
+            stats['smiley_feedback'] = self.smiley_feedback.get_statistics()
+        
         # Add baseline bias info
         if self.baseline_bias is not None:
             stats['baseline_bias'] = {
@@ -723,6 +990,8 @@ class NPGInferenceEngine:
         self.uncertainty_history.clear()
         if self.use_accumulator:
             self.accumulator.reset()
+        if self.use_smiley_feedback and self.smiley_feedback is not None:
+            self.smiley_feedback.reset()
     
     def set_temperature(self, temperature: float):
         """

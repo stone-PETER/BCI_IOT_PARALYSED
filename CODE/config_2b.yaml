@@ -38,6 +38,18 @@ preprocessing:
   apply_car: false # Common Average Reference - disabled
   normalize: null # No normalization
 
+# Data Augmentation
+augmentation:
+  enabled: true # Enable data augmentation
+  augmentation_factor: 1 # Number of augmented versions per original epoch
+  time_shift_range: 0.05 # ±50ms time shifts
+  noise_level: 0.08 # 8% noise level
+  amplitude_range: [0.85, 1.15] # 85%-115% amplitude scaling
+  time_warp_range: [0.96, 1.04] # 96%-104% time warping
+  frequency_shift_range: 1.5 # ±1.5Hz frequency shifting
+  channel_dropout_prob: 0.05 # 5% chance to drop each channel
+  apply_probability: 0.7 # 70% chance to apply each augmentation
+
 paths:
   data_path: "BCI/bci4_2b"
   model_save_path: "models"

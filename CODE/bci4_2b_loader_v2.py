@@ -11,6 +11,14 @@ from pathlib import Path
 from scipy.io import loadmat
 from scipy.signal import butter, filtfilt
 
+# Import augmentation pipeline
+try:
+    from eeg_augmentation import EEGAugmentationPipeline
+    AUGMENTATION_AVAILABLE = True
+except ImportError:
+    AUGMENTATION_AVAILABLE = False
+    logging.warning("EEG augmentation not available - install dependencies or check eeg_augmentation.py")
+
 
 class BCI4_2B_Loader:
     """Data loader for BCI Competition IV Dataset 2b."""
@@ -29,6 +37,20 @@ class BCI4_2B_Loader:
         
         # Preprocessing config
         self.preprocess_config = self.config.get('preprocessing', {})
+        
+        # Augmentation config
+        self.augmentation_config = self.config.get('augmentation', {})
+        if self.augmentation_config.get('enabled', False) and AUGMENTATION_AVAILABLE:
+            self.augmenter = EEGAugmentationPipeline(
+                time_shift_range=self.augmentation_config.get('time_shift_range', 0.05),
+                noise_level=self.augmentation_config.get('noise_level', 0.08),
+                amplitude_range=tuple(self.augmentation_config.get('amplitude_range', [0.85, 1.15])),
+                time_warp_range=tuple(self.augmentation_config.get('time_warp_range', [0.96, 1.04])),
+                frequency_shift_range=self.augmentation_config.get('frequency_shift_range', 1.5),
+                apply_probability=self.augmentation_config.get('apply_probability', 0.7)
+            )
+        else:
+            self.augmenter = None
         
         # Setup logging
         logging.basicConfig(
@@ -181,6 +203,39 @@ class BCI4_2B_Loader:
             normalized[:, :, i] = (epochs[:, :, i] - mean) / (std + 1e-8)
         return normalized
     
+    def apply_augmentation(self, epochs, labels, sampling_rate=250):
+        """
+        Apply data augmentation to epochs and labels.
+        
+        Args:
+            epochs: EEG epochs (n_epochs, n_samples, n_channels)
+            labels: Corresponding labels
+            sampling_rate: Sampling rate in Hz
+            
+        Returns:
+            augmented_epochs, augmented_labels
+        """
+        if not self.augmentation_config.get('enabled', False):
+            self.logger.debug("Data augmentation DISABLED")
+            return epochs, labels
+            
+        if self.augmenter is None:
+            self.logger.warning("Augmentation enabled but no augmenter available")
+            return epochs, labels
+            
+        augmentation_factor = self.augmentation_config.get('augmentation_factor', 1)
+        
+        if augmentation_factor <= 0:
+            return epochs, labels
+            
+        self.logger.info(f"Applying data augmentation (factor={augmentation_factor})")
+        
+        augmented_epochs, augmented_labels = self.augmenter.augment_with_labels(
+            epochs, labels, sampling_rate, augmentation_factor
+        )
+        
+        return augmented_epochs, augmented_labels
+
     def load_subject(self, subject_id: str, sessions: list = None):
         """
         Load data for a subject.
@@ -251,6 +306,9 @@ class BCI4_2B_Loader:
         all_labels = np.concatenate(all_labels_list, axis=0)
         
         self.logger.info(f"Total: {len(all_epochs)} epochs from {len(all_epochs_list)} subjects")
+        
+        # Apply data augmentation if enabled
+        all_epochs, all_labels = self.apply_augmentation(all_epochs, all_labels, self.sampling_rate)
         
         return all_epochs, all_labels
 

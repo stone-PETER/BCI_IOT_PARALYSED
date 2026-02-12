@@ -64,7 +64,11 @@ class NPGRealtimeBCI:
                  accumulator_decay: float = 0.15,
                  neutral_zone: tuple = (0.45, 0.55),
                  temperature: float = 1.5,
-                 use_calibration: bool = True):
+                 use_calibration: bool = True,
+                 use_smiley_feedback: bool = False,
+                 smiley_window_duration: float = 2.0,
+                 smiley_threshold: float = 3.5,
+                 smiley_prediction_rate: float = 2.2):
         """
         Initialize real-time BCI system.
         
@@ -80,10 +84,15 @@ class NPGRealtimeBCI:
             neutral_zone: Confidence range treated as uncertain (default: 0.45-0.55)
             temperature: Temperature for calibrated confidence (default: 1.5)
             use_calibration: Whether to use temperature-scaled confidence
+            use_smiley_feedback: Use Smiley Feedback running integral (default: False)
+            smiley_window_duration: Integration window in seconds (default: 2.0)
+            smiley_threshold: Sum threshold to trigger (default: 3.5)
+            smiley_prediction_rate: Expected prediction rate in Hz (default: 2.2)
         """
         self.simulate = simulate
         self.confidence_threshold = confidence_threshold
         self.use_accumulator = use_accumulator
+        self.use_smiley_feedback = use_smiley_feedback
         self.is_running = False
         
         # Setup logging
@@ -115,10 +124,12 @@ class NPGRealtimeBCI:
             input_rate=INPUT_SAMPLING_RATE,
             output_rate=OUTPUT_SAMPLING_RATE,
             epoch_duration=EPOCH_DURATION,
-            use_laplacian=True,  # Use small Laplacian (not CAR)
+            use_car=False,  # Model trained on raw data, no CAR
+            apply_bandpass=False,  # Model trained on raw data
+            apply_zscore=False,  # Model trained on raw data
             realtime_mode=True
         )
-        self.logger.info("   ✅ Preprocessor ready (small Laplacian spatial filter)")
+        self.logger.info("   ✅ Preprocessor ready (raw data preprocessing matching training)")
         
         # Inference engine with calibration
         self.inference = NPGInferenceEngine(
@@ -130,9 +141,14 @@ class NPGRealtimeBCI:
             accumulator_decay=accumulator_decay,
             neutral_zone=neutral_zone,
             temperature=temperature,
-            use_calibration=use_calibration
+            use_calibration=use_calibration,
+            use_smiley_feedback=use_smiley_feedback,
+            smiley_window_duration=smiley_window_duration,
+            smiley_threshold=smiley_threshold,
+            smiley_prediction_rate=smiley_prediction_rate
         )
-        self.logger.info("   ✅ Inference engine ready (temperature-calibrated confidence)")
+        mode_str = "Smiley Feedback" if use_smiley_feedback else "temperature-calibrated"
+        self.logger.info(f"   ✅ Inference engine ready ({mode_str} confidence)")
         
         # FIXED: Sliding window buffer with correct size for input rate
         stride = int(INPUT_EPOCH_SAMPLES * (1 - window_overlap))
@@ -312,9 +328,23 @@ class NPGRealtimeBCI:
             if preprocessed.shape != (1, N_CHANNELS, OUTPUT_EPOCH_SAMPLES, 1):
                 self.logger.warning(f"Preprocessed shape mismatch: {preprocessed.shape}")
             
-            # Inference with accumulator (returns triggered command or UNCERTAIN)
-            if self.use_accumulator:
-                class_idx, confidence, class_name, is_triggered = self.inference.predict_with_accumulator(preprocessed)
+            # Inference with accumulator or smiley feedback
+            if self.use_smiley_feedback:
+                # Use Smiley Feedback running integral
+                class_idx, confidence, class_name, is_triggered, winning_sum = \
+                    self.inference.predict_with_smiley_feedback(preprocessed)
+                
+                if is_triggered:
+                    command = class_name
+                    self.command_counts[command] += 1
+                else:
+                    command = "UNCERTAIN"
+                    self.command_counts["UNCERTAIN"] += 1
+                    
+            elif self.use_accumulator:
+                # Use Leaky Accumulator
+                class_idx, confidence, class_name, is_triggered = \
+                    self.inference.predict_with_accumulator(preprocessed)
                 
                 # Only count as command if accumulator triggered
                 if is_triggered:
@@ -361,19 +391,26 @@ class NPGRealtimeBCI:
         """Log a new command."""
         icon = "👈" if command == "LEFT_HAND" else "👉"
         
-        # Add accumulator bucket info if enabled
-        bucket_info = ""
-        if self.use_accumulator:
+        # Add accumulator or smiley feedback info
+        feedback_info = ""
+        if self.use_smiley_feedback:
+            status = self.inference.get_smiley_feedback_status()
+            if status.get('enabled'):
+                sums = status['integral_sums']
+                left_pct = sums['LEFT_HAND']['percent_to_trigger']
+                right_pct = sums['RIGHT_HAND']['percent_to_trigger']
+                feedback_info = f" | Integral: L={left_pct:3.0f}% R={right_pct:3.0f}%"
+        elif self.use_accumulator:
             status = self.inference.get_accumulator_status()
             if status.get('enabled'):
                 left_pct = status['buckets']['LEFT_HAND']['percent_full']
                 right_pct = status['buckets']['RIGHT_HAND']['percent_full']
-                bucket_info = f" | Buckets: L={left_pct:3.0f}% R={right_pct:3.0f}%"
+                feedback_info = f" | Buckets: L={left_pct:3.0f}% R={right_pct:3.0f}%"
         
         self.logger.info(
             f"{icon} {command:12} | "
             f"Confidence: {confidence:5.1%} | "
-            f"Processing: {proc_time*1000:5.1f}ms{bucket_info}"
+            f"Processing: {proc_time*1000:5.1f}ms{feedback_info}"
         )
     
     def _log_status(self):
@@ -382,14 +419,21 @@ class NPGRealtimeBCI:
         epochs_per_sec = self.total_epochs_processed / runtime
         avg_proc_time = np.mean(self.processing_times) if self.processing_times else 0
         
-        # Add accumulator bucket info if enabled
-        bucket_info = ""
-        if self.use_accumulator:
+        # Add accumulator or smiley feedback info
+        feedback_info = ""
+        if self.use_smiley_feedback:
+            status = self.inference.get_smiley_feedback_status()
+            if status.get('enabled'):
+                sums = status['integral_sums']
+                left_pct = sums['LEFT_HAND']['percent_to_trigger']
+                right_pct = sums['RIGHT_HAND']['percent_to_trigger']
+                feedback_info = f" | Integral: L={left_pct:3.0f}% R={right_pct:3.0f}%"
+        elif self.use_accumulator:
             status = self.inference.get_accumulator_status()
             if status.get('enabled'):
                 left_pct = status['buckets']['LEFT_HAND']['percent_full']
                 right_pct = status['buckets']['RIGHT_HAND']['percent_full']
-                bucket_info = f" | Buckets: L={left_pct:3.0f}% R={right_pct:3.0f}%"
+                feedback_info = f" | Buckets: L={left_pct:3.0f}% R={right_pct:3.0f}%"
         
         # Add uncertainty info
         avg_uncertainty = self.inference.get_average_uncertainty()
@@ -399,7 +443,7 @@ class NPGRealtimeBCI:
             f"📊 Status | "
             f"Epochs: {self.total_epochs_processed:4} | "
             f"Rate: {epochs_per_sec:4.1f}/s | "
-            f"Avg time: {avg_proc_time*1000:5.1f}ms{bucket_info}{uncertainty_info}"
+            f"Avg time: {avg_proc_time*1000:5.1f}ms{feedback_info}{uncertainty_info}"
         )
     
     def stop(self):
@@ -628,6 +672,14 @@ def main():
                        help='Neutral zone lower bound (default: 0.45)')
     parser.add_argument('--neutral-high', type=float, default=0.55,
                        help='Neutral zone upper bound (default: 0.55)')
+    parser.add_argument('--smiley-feedback', action='store_true',
+                       help='Use Smiley Feedback running integral (BCI Competition strategy)')
+    parser.add_argument('--smiley-window', type=float, default=2.0,
+                       help='Smiley Feedback integration window in seconds (default: 2.0)')
+    parser.add_argument('--smiley-threshold', type=float, default=3.5,
+                       help='Smiley Feedback trigger threshold for sum (default: 3.5)')
+    parser.add_argument('--smiley-rate', type=float, default=2.2,
+                       help='Expected prediction rate in Hz (default: 2.2)')
     parser.add_argument('--calibrate', action='store_true',
                        help='Run baseline calibration (60s rest state recording)')
     parser.add_argument('--calibrate-duration', type=int, default=60,
@@ -659,7 +711,7 @@ def main():
             # Sort by filename (timestamp) and get the latest
             latest_model = sorted(best_models, key=lambda x: x.name)[-1]
             model_path = latest_model
-            print(f"🔍 Using latest model: {latest_model.name}")
+            print(f"-> Using latest model: {latest_model.name}")
         else:
             # Fall back to best model
             model_path = models_dir / 'best' / 'eegnet_2class_bci2b.keras'
@@ -685,7 +737,11 @@ def main():
             use_accumulator=use_accumulator,
             accumulator_threshold=args.acc_threshold,
             accumulator_decay=args.acc_decay,
-            neutral_zone=neutral_zone
+            neutral_zone=neutral_zone,
+            use_smiley_feedback=args.smiley_feedback,
+            smiley_window_duration=args.smiley_window,
+            smiley_threshold=args.smiley_threshold,
+            smiley_prediction_rate=args.smiley_rate
         )
     elif args.direct:
         # Direct serial connection mode
@@ -698,7 +754,11 @@ def main():
             use_accumulator=use_accumulator,
             accumulator_threshold=args.acc_threshold,
             accumulator_decay=args.acc_decay,
-            neutral_zone=neutral_zone
+            neutral_zone=neutral_zone,
+            use_smiley_feedback=args.smiley_feedback,
+            smiley_window_duration=args.smiley_window,
+            smiley_threshold=args.smiley_threshold,
+            smiley_prediction_rate=args.smiley_rate
         )
         # Replace adapter with direct serial adapter
         bci.adapter = NPGLiteDirectSerial(port=args.port, baudrate=args.baudrate)
@@ -713,7 +773,11 @@ def main():
             use_accumulator=use_accumulator,
             accumulator_threshold=args.acc_threshold,
             accumulator_decay=args.acc_decay,
-            neutral_zone=neutral_zone
+            neutral_zone=neutral_zone,
+            use_smiley_feedback=args.smiley_feedback,
+            smiley_window_duration=args.smiley_window,
+            smiley_threshold=args.smiley_threshold,
+            smiley_prediction_rate=args.smiley_rate
         )
     
     # Connect
