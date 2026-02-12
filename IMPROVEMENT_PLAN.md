@@ -1,7 +1,9 @@
 # BCI Model Improvement Plan
-*Target: Exceed 73.64% accuracy*
+
+_Target: Exceed 73.64% accuracy_
 
 ## Current Status
+
 - **Best Accuracy:** 68.61% (Feb 5, 2026)
 - **Target:** 73.64% (previous best)
 - **Gap:** 5.03 percentage points
@@ -9,6 +11,7 @@
 ## Phase 1: Training Optimization (Week 1-2)
 
 ### A. Hyperparameter Tuning
+
 - [ ] **Learning Rate Scheduling**
   - Test cosine annealing: `CosineAnnealingLR`
   - Try learning rate warm-up
@@ -26,6 +29,7 @@
   - Experiment with dropout rates: [0.3, 0.4, 0.6]
 
 ### B. Training Strategy
+
 - [ ] **Longer Training**
   - Increase epochs to 500 with patience=100
   - Use ReduceLROnPlateau more aggressively
@@ -39,6 +43,7 @@
 ## Phase 2: Data Enhancement (Week 3-4)
 
 ### A. Preprocessing Optimization
+
 - [ ] **Filter Tuning**
   - Test different bandpass ranges: [4-40Hz], [8-30Hz], [8-35Hz]
   - Experiment with notch filter variations
@@ -50,6 +55,7 @@
   - Surface Laplacian with different electrode configurations
 
 ### B. Feature Engineering
+
 - [ ] **Spectral Features**
   - Power Spectral Density (PSD) features
   - Band power ratios (alpha/beta, theta/alpha)
@@ -63,6 +69,7 @@
 ## Phase 3: Advanced Techniques (Week 5-6)
 
 ### A. Model Architecture
+
 - [ ] **Attention Mechanisms**
   - Self-attention for temporal dependencies
   - Channel attention for spatial focus
@@ -74,6 +81,7 @@
   - Residual connections in EEGNet
 
 ### B. Subject Adaptation
+
 - [ ] **Transfer Learning**
   - Pre-train on all subjects, fine-tune per subject
   - Domain adaptation techniques
@@ -82,12 +90,14 @@
 ## Phase 4: System Integration (Week 7-8)
 
 ### A. Real-time Optimization
+
 - [ ] **Online Learning**
   - Adaptive model updates during use
   - Incremental learning from user feedback
   - Confidence-weighted updates
 
 ### B. Calibration Enhancement
+
 - [ ] **Baseline Calibration**
   - Subject-specific baseline collection
   - Dynamic baseline adjustment
@@ -98,30 +108,35 @@
 ### 🔥 **Immediate Actions (This Week)**
 
 #### 1. Test New Setup
+
 ```bash
 cd c:\programs\BCI_IOT_PARALYSED
 python test_improvements.py
 ```
 
 #### 2. Run Hyperparameter Sweep
+
 ```bash
 python hyperparameter_sweep.py
 # Choose option 1: Quick Test (3 promising configs)
 ```
 
 #### 3. Train with Augmentation
+
 ```bash
 python CODE/train_model_2b.py
 # Now includes data augmentation (2x data with variations)
 ```
 
 ### 📈 **This Week's Goals**
+
 - [ ] Validate augmentation pipeline works
-- [ ] Test 3-5 hyperparameter combinations  
+- [ ] Test 3-5 hyperparameter combinations
 - [ ] Achieve 70%+ accuracy (2% improvement)
 - [ ] Document which techniques work best
 
 ### 🚀 **Next Week's Advanced Techniques**
+
 - [ ] Implement cross-validation
 - [ ] Add more sophisticated architectures
 - [ ] Test ensemble methods
@@ -136,7 +151,7 @@ python CODE/train_model_2b.py
 ## Tools & Scripts to Create
 
 1. **Hyperparameter sweep script** ✅ **IMPLEMENTED**
-2. **Data augmentation pipeline** ✅ **IMPLEMENTED** 
+2. **Data augmentation pipeline** ✅ **IMPLEMENTED**
 3. **Cross-validation trainer**
 4. **Model comparison dashboard**
 5. **Performance tracking system** ✅ **IMPLEMENTED** (best accuracy tracking)
@@ -144,19 +159,22 @@ python CODE/train_model_2b.py
 ## ✅ **READY TO USE NOW**
 
 ### 📁 **New Files Created:**
+
 - `hyperparameter_sweep.py` - Systematic hyperparameter optimization
 - `CODE/eeg_augmentation.py` - Comprehensive data augmentation
 - `test_improvements.py` - Test setup and run quick training
 - `IMPROVEMENT_PLAN.md` - This action plan
 
 ### ⚙️ **Enhanced Files:**
+
 - `CODE/config_2b.yaml` - Added augmentation configuration
 - `CODE/bci4_2b_loader_v2.py` - Integrated data augmentation
 - `CODE/train_model_2b.py` - Best accuracy tracking system
 
 ### 🎯 **Ready Improvements:**
+
 1. **Data Augmentation:** 2x training data with realistic variations
-2. **Hyperparameter Optimization:** Automated testing of promising configurations  
+2. **Hyperparameter Optimization:** Automated testing of promising configurations
 3. **Best Model Tracking:** Never lose your best performing model again
 4. **Timestamped Models:** Complete training history preservation
 
@@ -166,7 +184,7 @@ python CODE/train_model_2b.py
 # 1. Test the new setup
 python test_improvements.py
 
-# 2. Run hyperparameter optimization  
+# 2. Run hyperparameter optimization
 python hyperparameter_sweep.py
 
 # 3. Train with improvements
@@ -174,6 +192,7 @@ python CODE/train_model_2b.py
 ```
 
 **Expected Results:**
+
 - **Week 1:** 70-72% accuracy (beat current 68.61%)
-- **Week 2:** 73-75% accuracy (match/exceed original 73.64%)  
-- **Week 3+:** 75%+ accuracy (state-of-the-art performance)**
+- **Week 2:** 73-75% accuracy (match/exceed original 73.64%)
+- **Week 3+:** 75%+ accuracy (state-of-the-art performance)\*\*
