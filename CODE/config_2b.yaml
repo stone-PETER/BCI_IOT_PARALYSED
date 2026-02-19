@@ -3,6 +3,9 @@
 # 3 EEG channels: C3, Cz, C4
 
 model:
+  # Model Architecture Selection
+  architecture: "eegnet" # Options: eegnet, deepconvnet, shallowconvnet, etc.
+
   # Model architecture (adjusted for 3 channels and binary classification)
   chans: 3 # Only 3 channels (C3, Cz, C4)
   samples: 1000 # 4 seconds at 250 Hz

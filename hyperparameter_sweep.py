@@ -62,7 +62,7 @@ class HyperparameterSweep:
         
         # Update paths for this run
         config_file = f"config_sweep_{run_id}.yaml"
-        config_path = Path("CODE") / config_file
+        config_path = Path(config_file)
         
         with open(config_path, 'w') as f:
             yaml.dump(config, f, indent=2)
@@ -79,11 +79,18 @@ class HyperparameterSweep:
         config_path = self.create_config_variant(params, run_id)
         
         try:
+            # Change to CODE directory for training
+            original_cwd = os.getcwd()
+            os.chdir('CODE')
+            
             # Initialize trainer with custom config
-            trainer = EEGNetTrainer2B(str(config_path))
+            trainer = EEGNetTrainer2B(f"../{str(config_path)}")
             
             # Run training
             results = trainer.run_complete_training()
+            
+            # Return to original directory
+            os.chdir(original_cwd)
             
             # Save results
             experiment_results = {
@@ -105,6 +112,12 @@ class HyperparameterSweep:
             return experiment_results
             
         except Exception as e:
+            # Make sure we return to original directory
+            if 'original_cwd' in locals():
+                try:
+                    os.chdir(original_cwd)
+                except:
+                    pass
             print(f"❌ Experiment {run_id} failed: {e}")
             # Clean up config file
             if config_path.exists():

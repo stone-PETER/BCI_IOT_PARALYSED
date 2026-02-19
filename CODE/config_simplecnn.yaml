@@ -1,0 +1,59 @@
+# SimpleCNN Test Configuration
+# Demonstrates using an alternative model architecture
+
+model:
+  architecture: "simplecnn" # Using SimpleCNN instead of EEGNet
+
+  # Standard parameters
+  chans: 3
+  samples: 1000
+  nb_classes: 2
+  dropoutRate: 0.5
+
+  # SimpleCNN-specific parameters
+  filters1: 16 # First conv layer filters
+  filters2: 32 # Second conv layer filters
+  kernel_size: [1, 32] # Kernel size for conv layers
+  pool_size: [1, 4] # Pooling size
+  dense_units: 128 # Dense layer units
+
+training:
+  batch_size: 32
+  epochs: 300
+  learning_rate: 0.001
+  optimizer: "adam"
+
+  early_stopping:
+    monitor: "val_accuracy"
+    patience: 50
+    restore_best_weights: true
+
+preprocessing:
+  enabled: false
+  filter_low: 8
+  filter_high: 30
+  apply_car: false
+  normalize: null
+
+augmentation:
+  enabled: true
+  augmentation_factor: 1
+  time_shift_range: 0.05
+  noise_level: 0.08
+  amplitude_range: [0.85, 1.15]
+  time_warp_range: [0.96, 1.04]
+  frequency_shift_range: 1.5
+  channel_dropout_prob: 0.05
+  apply_probability: 0.7
+
+paths:
+  data_path: "BCI/bci4_2b"
+  model_save_path: "models"
+  model_filename: "simplecnn_2class_bci2b.keras"
+  logs_path: "../logs"
+
+logging:
+  level: "INFO"
+  save_to_file: true
+  log_filename: "training_2b.log"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"

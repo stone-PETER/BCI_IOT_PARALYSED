@@ -60,6 +60,9 @@ preprocessing:
 
 # EEGNet Model Parameters
 model:
+  # Model Architecture Selection
+  architecture: "eegnet" # Options: eegnet, deepconvnet, shallowconvnet, etc.
+
   # Architecture parameters
   nb_classes: 4 # Number of motor imagery classes (left hand, right hand, foot, tongue)
   chans: 22 # Number of channels for unified dataset

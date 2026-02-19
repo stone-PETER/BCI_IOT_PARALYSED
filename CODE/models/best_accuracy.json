@@ -1,6 +1,6 @@
 {
-  "best_accuracy": 0.6861,
-  "timestamp": "20260205_124753",
-  "model_filename": "eegnet_2class_bci2b_20260205_124753.keras",
-  "updated_at": "2026-02-05T13:28:08.938466"
+  "best_accuracy": 0.688858687877655,
+  "timestamp": "20260213_134009",
+  "model_filename": "eegnet_2class_bci2b_20260213_134009.keras",
+  "updated_at": "2026-02-13T14:00:34.778329"
 }

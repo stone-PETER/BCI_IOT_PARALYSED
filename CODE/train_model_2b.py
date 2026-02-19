@@ -22,7 +22,7 @@ from tensorflow.keras.utils import to_categorical
 from sklearn.model_selection import train_test_split
 
 from bci4_2b_loader_v2 import BCI4_2B_Loader
-from eegnet_model import EEGNet
+from model_factory import ModelFactory
 
 
 class EEGNetTrainer2B:
@@ -67,7 +67,10 @@ class EEGNetTrainer2B:
         
         # Initialize components
         self.data_loader = BCI4_2B_Loader(str(config_path))
-        self.eegnet = EEGNet(config_path)
+        
+        # Use model factory for flexible model selection
+        self.model_factory = ModelFactory(str(config_path))
+        self.eegnet = self.model_factory.create_model(compile_model=False)
         
         # Training state
         self.model = None

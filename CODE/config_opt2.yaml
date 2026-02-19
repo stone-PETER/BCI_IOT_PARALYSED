@@ -1,0 +1,57 @@
+# Optimization Config 2: Longer Kernel + Lower Dropout
+# Configuration for better temporal feature capture
+
+model:
+  architecture: "eegnet" # Model type - change to test different architectures
+  chans: 3
+  samples: 1000
+  nb_classes: 2
+  kernLength: 128 # Longer kernel for better temporal features
+  F1: 8 # Keep original filter count
+  D: 2
+  F2: 16 # Original second layer
+  dropoutRate: 0.3 # Lower dropout for more learning
+  dropoutType: "Dropout"
+  norm_rate: 0.25
+
+training:
+  batch_size: 32
+  epochs: 500
+  learning_rate: 0.001 # Standard learning rate
+  optimizer: "adam"
+
+  early_stopping:
+    monitor: "val_accuracy"
+    patience: 100
+    restore_best_weights: true
+
+preprocessing:
+  enabled: false
+  filter_low: 8
+  filter_high: 30
+  apply_car: false
+  normalize: null
+
+# Conservative Data Augmentation
+augmentation:
+  enabled: true
+  augmentation_factor: 1
+  time_shift_range: 0.03 # More conservative
+  noise_level: 0.04 # Lower noise level
+  amplitude_range: [0.90, 1.10] # Conservative amplitude
+  time_warp_range: [0.98, 1.02] # Minimal time warping
+  frequency_shift_range: 0.5 # Minimal frequency shift
+  channel_dropout_prob: 0.02 # Very low dropout
+  apply_probability: 0.5 # Lower application rate
+
+paths:
+  data_path: "BCI/bci4_2b"
+  model_save_path: "models"
+  model_filename: "eegnet_2class_bci2b.keras"
+  logs_path: "../logs"
+
+logging:
+  level: "INFO"
+  save_to_file: true
+  log_filename: "training_2b.log"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"

@@ -1,0 +1,57 @@
+# Optimization Config 3: Aggressive Optimization
+# Configuration with highest potential performance
+
+model:
+  architecture: "eegnet" # Model type - change to test different architectures
+  chans: 3
+  samples: 1000
+  nb_classes: 2
+  kernLength: 96 # Balanced kernel length
+  F1: 12 # Intermediate filter count
+  D: 2
+  F2: 24 # Intermediate second layer
+  dropoutRate: 0.35 # Balanced dropout
+  dropoutType: "Dropout"
+  norm_rate: 0.25
+
+training:
+  batch_size: 16 # Smaller batch for more gradient updates
+  epochs: 600 # Maximum epochs
+  learning_rate: 0.0015 # Balanced learning rate
+  optimizer: "adam"
+
+  early_stopping:
+    monitor: "val_accuracy"
+    patience: 120 # Maximum patience
+    restore_best_weights: true
+
+preprocessing:
+  enabled: false
+  filter_low: 8
+  filter_high: 30
+  apply_car: false
+  normalize: null
+
+# Optimized Data Augmentation
+augmentation:
+  enabled: true
+  augmentation_factor: 2 # Triple the data!
+  time_shift_range: 0.05 # Standard range
+  noise_level: 0.07 # Moderate noise
+  amplitude_range: [0.85, 1.15] # Good variation
+  time_warp_range: [0.96, 1.04] # Reasonable warping
+  frequency_shift_range: 1.2 # Moderate frequency shift
+  channel_dropout_prob: 0.04 # Low dropout
+  apply_probability: 0.7 # High application rate
+
+paths:
+  data_path: "BCI/bci4_2b"
+  model_save_path: "models"
+  model_filename: "eegnet_2class_bci2b.keras"
+  logs_path: "../logs"
+
+logging:
+  level: "INFO"
+  save_to_file: true
+  log_filename: "training_2b.log"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"

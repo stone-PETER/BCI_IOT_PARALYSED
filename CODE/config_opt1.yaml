@@ -1,0 +1,57 @@
+# Optimization Config 1: Higher Learning Rate + More Filters
+# Configuration for better feature extraction
+
+model:
+  architecture: "eegnet" # Model type - change to test different architectures
+  chans: 3
+  samples: 1000
+  nb_classes: 2
+  kernLength: 64
+  F1: 16 # Double filters for better feature extraction
+  D: 2
+  F2: 32 # Double second layer filters
+  dropoutRate: 0.4 # Reduced dropout for better learning
+  dropoutType: "Dropout"
+  norm_rate: 0.25
+
+training:
+  batch_size: 32
+  epochs: 500 # More epochs for better convergence
+  learning_rate: 0.002 # Higher learning rate
+  optimizer: "adam"
+
+  early_stopping:
+    monitor: "val_accuracy"
+    patience: 100 # More patience for longer training
+    restore_best_weights: true
+
+preprocessing:
+  enabled: false
+  filter_low: 8
+  filter_high: 30
+  apply_car: false
+  normalize: null
+
+# Enhanced Data Augmentation
+augmentation:
+  enabled: true
+  augmentation_factor: 1
+  time_shift_range: 0.04 # Slightly reduced for stability
+  noise_level: 0.06 # Reduced noise to preserve signal quality
+  amplitude_range: [0.88, 1.12] # Tighter amplitude variation
+  time_warp_range: [0.97, 1.03] # Conservative time warping
+  frequency_shift_range: 1.0 # Reduced frequency shift
+  channel_dropout_prob: 0.03 # Lower dropout probability
+  apply_probability: 0.6 # Slightly lower probability for stability
+
+paths:
+  data_path: "BCI/bci4_2b"
+  model_save_path: "models"
+  model_filename: "eegnet_2class_bci2b.keras"
+  logs_path: "../logs"
+
+logging:
+  level: "INFO"
+  save_to_file: true
+  log_filename: "training_2b.log"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"

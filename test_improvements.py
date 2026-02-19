@@ -21,10 +21,10 @@ def test_augmentation():
     
     try:
         # Test with augmentation enabled
-        trainer = EEGNetTrainer2B("CODE/config_2b.yaml")
+        trainer = EEGNetTrainer2B("config_2b.yaml")
         
-        print(f"✅ Augmentation enabled: {trainer.loader.augmentation_config.get('enabled', False)}")
-        print(f"📈 Augmentation factor: {trainer.loader.augmentation_config.get('augmentation_factor', 0)}")
+        print(f"✅ Augmentation enabled: {trainer.data_loader.augmentation_config.get('enabled', False)}")
+        print(f"📈 Augmentation factor: {trainer.data_loader.augmentation_config.get('augmentation_factor', 0)}")
         
         # Load a small sample to test augmentation
         print("\n🔄 Loading sample data...")
@@ -53,7 +53,7 @@ def quick_train_test():
         from tempfile import NamedTemporaryFile
         
         # Load base config
-        with open("CODE/config_2b.yaml", 'r') as f:
+        with open("config_2b.yaml", 'r') as f:
             config = yaml.safe_load(f)
         
         # Modify for quick test
