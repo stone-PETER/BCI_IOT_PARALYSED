@@ -6,7 +6,7 @@
 2. **Change one line:**
    ```yaml
    model:
-     architecture: "eegnet"  # ← Change "eegnet" to "simplecnn"
+     architecture: "eegnet" # ← Change "eegnet" to "simplecnn"
    ```
 3. **Run training:**
    ```bash
@@ -19,10 +19,10 @@
 
 ## 📋 Available Models
 
-| Model | Architecture | Parameters | Best For |
-|-------|-------------|------------|----------|
-| **eegnet** | EEGNet (compact CNN) | ~2,226 | Limited data, fast training |
-| **simplecnn** | Simple baseline CNN | ~779,330 | Baseline comparison, prototyping |
+| Model         | Architecture         | Parameters | Best For                         |
+| ------------- | -------------------- | ---------- | -------------------------------- |
+| **eegnet**    | EEGNet (compact CNN) | ~2,226     | Limited data, fast training      |
+| **simplecnn** | Simple baseline CNN  | ~779,330   | Baseline comparison, prototyping |
 
 ---
 
@@ -45,7 +45,7 @@ python train_model_2b.py config_2b.yaml
 # Terminal 1: Train EEGNet
 python train_model_2b.py config_2b.yaml
 
-# Terminal 2: Train SimpleCNN  
+# Terminal 2: Train SimpleCNN
 python train_model_2b.py config_simplecnn.yaml
 
 # Terminal 3: Train with optimization settings
@@ -57,6 +57,7 @@ Compare results in `logs/` folder!
 ### Use Case 3: Hyperparameter Tuning with Different Models
 
 Create configs:
+
 - `config_eegnet_opt1.yaml` - architecture: "eegnet"
 - `config_eegnet_opt2.yaml` - architecture: "eegnet"
 - `config_simplecnn_opt1.yaml` - architecture: "simplecnn"
@@ -113,7 +114,7 @@ class MyModel:
             self.config = yaml.safe_load(f)
         self.model_config = self.config['model']
         self.model = None
-    
+
     def build_model(self):
         input_layer = Input(shape=(
             self.model_config['chans'],
@@ -121,11 +122,11 @@ class MyModel:
             1
         ))
         # Your architecture here
-        output = Dense(self.model_config['nb_classes'], 
+        output = Dense(self.model_config['nb_classes'],
                       activation='softmax')(input_layer)
         self.model = Model(inputs=input_layer, outputs=output)
         return self.model
-    
+
     def compile_model(self, optimizer='adam', learning_rate=0.001):
         # Compile logic here
         pass
@@ -147,7 +148,7 @@ AVAILABLE_MODELS = {
 
 ```yaml
 model:
-  architecture: "mymodel"  # ← That's it!
+  architecture: "mymodel" # ← That's it!
 ```
 
 ---
@@ -161,6 +162,7 @@ python test_model_factory.py
 ```
 
 Should show:
+
 ```
 ✓ PASS: List Models
 ✓ PASS: EEGNet Creation
@@ -204,6 +206,7 @@ cat models/best_accuracy.json
 ```
 
 Output:
+
 ```json
 {
   "best_accuracy": 0.6825,
@@ -217,6 +220,7 @@ Output:
 ## 🎯 Tips & Best Practices
 
 ✅ **DO:**
+
 - Keep separate config files for different models
 - Use descriptive config names: `config_eegnet_opt1.yaml`
 - Run tests after adding new models
@@ -224,6 +228,7 @@ Output:
 - Document your custom models
 
 ❌ **DON'T:**
+
 - Don't modify `model_factory.py` frequently (register once)
 - Don't hardcode model choices in training scripts
 - Don't forget to test new models before training
@@ -235,6 +240,7 @@ Output:
 ### Error: "Model type 'xyz' not found"
 
 **Fix:** Register model in `model_factory.py`:
+
 ```python
 AVAILABLE_MODELS = {
     'xyz': YourModelClass,  # Add this
@@ -244,15 +250,17 @@ AVAILABLE_MODELS = {
 ### Error: Missing config parameter
 
 **Fix:** Add parameter to config:
+
 ```yaml
 model:
   architecture: "yourmodel"
-  missing_param: value  # Add this
+  missing_param: value # Add this
 ```
 
 ### Model not training
 
 **Fix:** Check model has these methods:
+
 - `__init__(config_path)`
 - `build_model()`
 - `compile_model(optimizer, learning_rate)`
@@ -278,6 +286,7 @@ CODE/
 ## 🔗 Full Documentation
 
 See **MODEL_CONFIGURATION_GUIDE.md** for:
+
 - Detailed architecture explanations
 - Advanced usage patterns
 - More examples
@@ -299,11 +308,13 @@ See **MODEL_CONFIGURATION_GUIDE.md** for:
 ---
 
 **Made a change? Test it:**
+
 ```bash
 python test_model_factory.py
 ```
 
 **Ready to train:**
+
 ```bash
 python train_model_2b.py config_2b.yaml
 ```
