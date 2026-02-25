@@ -1,0 +1,47 @@
+{
+  "test_loss": 0.6283506155014038,
+  "test_accuracy": 0.63722825050354,
+  "classification_report": {
+    "Left Hand": {
+      "precision": 0.6379781420765027,
+      "recall": 0.6345108695652174,
+      "f1-score": 0.6362397820163488,
+      "support": 736.0
+    },
+    "Right Hand": {
+      "precision": 0.6364864864864865,
+      "recall": 0.6399456521739131,
+      "f1-score": 0.6382113821138211,
+      "support": 736.0
+    },
+    "accuracy": 0.6372282608695652,
+    "macro avg": {
+      "precision": 0.6372323142814946,
+      "recall": 0.6372282608695652,
+      "f1-score": 0.637225582065085,
+      "support": 1472.0
+    },
+    "weighted avg": {
+      "precision": 0.6372323142814946,
+      "recall": 0.6372282608695652,
+      "f1-score": 0.637225582065085,
+      "support": 1472.0
+    }
+  },
+  "confusion_matrix": [
+    [
+      467,
+      269
+    ],
+    [
+      265,
+      471
+    ]
+  ],
+  "target_names": [
+    "Left Hand",
+    "Right Hand"
+  ],
+  "is_new_best": false,
+  "current_best": 0.688858687877655
+}

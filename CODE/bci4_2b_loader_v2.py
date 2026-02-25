@@ -155,17 +155,19 @@ class BCI4_2B_Loader:
             self.logger.debug(f"Applying bandpass filter: {low}-{high} Hz")
             epochs = self._bandpass_filter(epochs, low, high)
         
-        # Common Average Reference - support both flat and nested config
-        # Flat: apply_car | Nested: car.enabled
+        # Spatial filtering: Small Laplacian (preferred) or CAR
+        # Small Laplacian must match npg_preprocessor.apply_small_laplacian()
+        apply_laplacian = self.preprocess_config.get('apply_laplacian', False)
         apply_car = self.preprocess_config.get('apply_car', False)
         car_nested = self.preprocess_config.get('car', {})
-        
-        if apply_car or car_nested.get('enabled', False):
-            # Note: For 3-channel setup, Small Laplacian is better than CAR
-            # but we keep CAR for consistency with training data
+
+        if apply_laplacian:
+            self.logger.debug("Applying Small Laplacian spatial filter")
+            epochs = self._apply_small_laplacian(epochs)
+        elif apply_car or car_nested.get('enabled', False):
             self.logger.debug("Applying Common Average Reference")
             epochs = self._apply_car(epochs)
-        
+
         # Z-score normalization - support both flat and nested config
         # Flat: normalize | Nested: zscore.enabled
         normalize_method = self.preprocess_config.get('normalize')
@@ -189,18 +191,58 @@ class BCI4_2B_Loader:
         
         return filtered
     
+    def _apply_small_laplacian(self, epochs):
+        """
+        Apply Small Laplacian spatial filter for 3-channel (C3, Cz, C4) setup.
+
+        Identical math to npg_preprocessor.apply_small_laplacian() so that
+        training and real-time inference see the same spatially filtered data.
+
+        C3_new = C3 - 0.5 * Cz
+        Cz_new = Cz - 0.25 * (C3 + C4)
+        C4_new = C4 - 0.5 * Cz
+
+        Args:
+            epochs: (n_trials, n_samples, 3) - channel order must be C3, Cz, C4
+        Returns:
+            Laplacian-filtered epochs with same shape
+        """
+        if epochs.shape[2] != 3:
+            self.logger.warning(f"Small Laplacian expects 3 channels, got {epochs.shape[2]}. Skipping.")
+            return epochs
+
+        c3 = epochs[:, :, 0]  # (n_trials, n_samples)
+        cz = epochs[:, :, 1]
+        c4 = epochs[:, :, 2]
+
+        laplacian = np.zeros_like(epochs)
+        laplacian[:, :, 0] = c3 - 0.5 * cz          # C3 referenced to Cz
+        laplacian[:, :, 1] = cz - 0.25 * (c3 + c4)  # Cz referenced to motor average
+        laplacian[:, :, 2] = c4 - 0.5 * cz          # C4 referenced to Cz
+        return laplacian
+
     def _apply_car(self, epochs):
         """Apply Common Average Reference."""
         mean_signal = epochs.mean(axis=2, keepdims=True)
         return epochs - mean_signal
     
     def _zscore_normalize(self, epochs):
-        """Apply z-score normalization per channel."""
+        """
+        Apply z-score normalization PER EPOCH PER CHANNEL.
+
+        Normalises each trial independently so that the model sees the same
+        kind of data at training time as it does during real-time inference
+        (where each 4-second window is normalised on its own statistics).
+
+        Global normalisation (across all trials) was previously used but it
+        destroys the within-trial variance the model needs for classification.
+        """
         normalized = np.zeros_like(epochs)
-        for i in range(epochs.shape[2]):
-            mean = epochs[:, :, i].mean()
-            std = epochs[:, :, i].std()
-            normalized[:, :, i] = (epochs[:, :, i] - mean) / (std + 1e-8)
+        for i in range(epochs.shape[0]):          # per trial
+            for j in range(epochs.shape[2]):      # per channel
+                mean = epochs[i, :, j].mean()
+                std  = epochs[i, :, j].std()
+                normalized[i, :, j] = (epochs[i, :, j] - mean) / (std + 1e-8)
         return normalized
     
     def apply_augmentation(self, epochs, labels, sampling_rate=250):
@@ -304,12 +346,11 @@ class BCI4_2B_Loader:
         
         all_epochs = np.concatenate(all_epochs_list, axis=0)
         all_labels = np.concatenate(all_labels_list, axis=0)
-        
+
         self.logger.info(f"Total: {len(all_epochs)} epochs from {len(all_epochs_list)} subjects")
-        
-        # Apply data augmentation if enabled
-        all_epochs, all_labels = self.apply_augmentation(all_epochs, all_labels, self.sampling_rate)
-        
+        # NOTE: Augmentation intentionally NOT applied here.
+        # It must be applied ONLY to the training split after train/test separation
+        # to prevent augmented copies from leaking into the validation/test sets.
         return all_epochs, all_labels
 
 

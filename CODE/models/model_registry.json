@@ -1,0 +1,66 @@
+{
+  "_readme": "Model registry for BCI EEGNet 2-class motor imagery. To rollback, copy the desired model file to models/best/eegnet_2class_bci2b.keras",
+  "active_model": {
+    "filename": "eegnet_2class_bci2b_20260224_172725.keras",
+    "deployed_as": "models/best/eegnet_2class_bci2b.keras",
+    "timestamp": "20260224_172725",
+    "test_accuracy": 0.7119565010070801,
+    "test_loss": 0.5725595951080322,
+    "architecture": "EEGNet F1=16 D=2 F2=32 kernLength=64",
+    "preprocessing": "none (raw .mat data)",
+    "augmentation": "factor=1 (time_shift, noise, amplitude, time_warp)",
+    "notes": "Larger EEGNet capacity + raw data training. New all-time best in this session."
+  },
+  "previous_best": {
+    "filename": "eegnet_2class_bci2b_20260213_134009.keras",
+    "timestamp": "20260213_134009",
+    "test_accuracy": 0.688858687877655,
+    "architecture": "EEGNet F1=8 D=2 F2=16 kernLength=64",
+    "preprocessing": "none",
+    "notes": "Was the stable fallback before Feb 24 session. Use this to rollback if new model underperforms in real-time."
+  },
+  "rollback_instructions": "Copy models/eegnet_2class_bci2b_20260213_134009.keras to models/best/eegnet_2class_bci2b.keras",
+  "history": [
+    {
+      "filename": "eegnet_2class_bci2b_20260224_172725.keras",
+      "timestamp": "20260224_172725",
+      "test_accuracy": 0.7119565010070801,
+      "test_loss": 0.5725595951080322,
+      "architecture": "EEGNet F1=16 D=2 F2=32 kernLength=64",
+      "preprocessing": "none (raw data)",
+      "augmentation": "factor=1",
+      "left_hand_f1": 0.7072,
+      "right_hand_f1": 0.7166,
+      "status": "active"
+    },
+    {
+      "filename": "eegnet_2class_bci2b_20260224_165016.keras",
+      "timestamp": "20260224_165016",
+      "test_accuracy": 0.6467391304347826,
+      "test_loss": 0.6283164024353027,
+      "architecture": "EEGNet F1=8 D=2 F2=16 kernLength=64",
+      "preprocessing": "bandpass 8-30Hz + laplacian + zscore",
+      "augmentation": "factor=1",
+      "notes": "Preprocessing degraded accuracy - laplacian constrains EEGNet spatial learning",
+      "status": "superseded"
+    },
+    {
+      "filename": "eegnet_2class_bci2b_20260223_103448.keras",
+      "timestamp": "20260223_103448",
+      "test_accuracy": 0.6372,
+      "architecture": "EEGNet F1=8 D=2 F2=16 kernLength=64",
+      "preprocessing": "bandpass 8-30Hz + laplacian + zscore (global zscore bug)",
+      "notes": "Had global zscore bug (per-trial instead of per-epoch) + augmentation data leakage",
+      "status": "superseded"
+    },
+    {
+      "filename": "eegnet_2class_bci2b_20260213_134009.keras",
+      "timestamp": "20260213_134009",
+      "test_accuracy": 0.688858687877655,
+      "architecture": "EEGNet F1=8 D=2 F2=16 kernLength=64",
+      "preprocessing": "none",
+      "notes": "Previous best - ROLLBACK TARGET if new model underperforms in real-time",
+      "status": "previous_best"
+    }
+  ]
+}
