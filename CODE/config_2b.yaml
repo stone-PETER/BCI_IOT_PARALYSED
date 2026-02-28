@@ -11,9 +11,9 @@ model:
   samples: 1000 # 4 seconds at 250 Hz
   nb_classes: 2 # Binary: left hand vs right hand
   kernLength: 64
-  F1: 8
+  F1: 16
   D: 2
-  F2: 16
+  F2: 32
   dropoutRate: 0.5
   dropoutType: "Dropout"
   norm_rate: 0.25
@@ -32,14 +32,16 @@ training:
     restore_best_weights: true
 
 preprocessing:
-  # Signal preprocessing - DISABLED to match original 73.64% model
-  # The original model was trained on RAW data (no preprocessing applied)
-  # This is because the loader expected nested config structure but got flat
-  enabled: false # Master switch for all preprocessing
-  filter_low: 8 # Hz (not applied if enabled=false)
-  filter_high: 30 # Hz
-  apply_car: false # Common Average Reference - disabled
-  normalize: null # No normalization
+  # Signal preprocessing - DISABLED for training
+  # Reason: EEGNet's temporal Conv2D learns frequency filters internally;
+  # benchmark .mat data is already clean. Preprocessing degraded accuracy
+  # from 73% → 64% in testing. Real-time inference uses notch-only.
+  enabled: false         # Master switch - raw data works best for EEGNet
+  filter_low: 8          # Hz (kept for reference, not applied)
+  filter_high: 30        # Hz (kept for reference, not applied)
+  apply_laplacian: false # Disabled
+  apply_car: false       # Disabled
+  normalize: none        # No normalization in training pipeline
 
 # Data Augmentation
 augmentation:

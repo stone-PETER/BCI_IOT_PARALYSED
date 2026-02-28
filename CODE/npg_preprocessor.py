@@ -168,34 +168,39 @@ class NPGPreprocessor:
                  notch_freq: float = 50.0,
                  notch_q: float = 30.0,
                  epoch_duration: float = 4.0,
-                 use_car: bool = False,  # DISABLED: Original model trained on raw data
-                 apply_bandpass: bool = False,  # DISABLED: Original model trained on raw data
-                 apply_zscore: bool = False,  # DISABLED: Original model trained on raw data
+                 use_car: bool = False,         # CAR disabled - wrong for 3 channels
+                 apply_laplacian: bool = False,  # Disabled: EEGNet learns spatial filters internally
+                 apply_bandpass: bool = False,   # Disabled: training on raw data; EEGNet learns freq filters
+                 apply_zscore: bool = False,     # Disabled: training on raw data; no normalization
                  scaling_factor: float = 1.0,
                  normalization_alpha: float = 0.95,
                  realtime_mode: bool = True):
         """
         Initialize preprocessor.
         
-        IMPORTANT: The original 73.64% model was trained on RAW data (no preprocessing).
-        Set apply_bandpass=False, use_car=False, apply_zscore=False to match training.
-        Only resampling (500→250 Hz) and optional notch filtering are applied.
-        
+        Preprocessing pipeline (matched to training: raw data, notch only):
+        1. Resample 500 → 250 Hz (with anti-aliasing)
+        2. Notch filter 50 Hz (powerline interference) - only active stage
+        (Bandpass, Laplacian, Z-score all disabled: training uses raw .mat data;
+         EEGNet learns frequency and spatial filters internally via its Conv2D layers.
+         Domain shift minimized by keeping inference close to training distribution.)
+
         Args:
             input_rate: Input sampling rate (NPG Lite: 500 Hz via Chords-Python)
             output_rate: Output sampling rate (Model expects: 250 Hz)
             target_channels: Indices of target channels [C3, Cz, C4]
-            filter_low: Bandpass filter lower cutoff (Hz) - only if apply_bandpass=True
-            filter_high: Bandpass filter upper cutoff (Hz) - only if apply_bandpass=True
+            filter_low: Bandpass filter lower cutoff (Hz)
+            filter_high: Bandpass filter upper cutoff (Hz)
             apply_notch: Whether to apply notch filter for powerline removal
             notch_freq: Powerline frequency (50 Hz Europe/Asia, 60 Hz Americas)
             notch_q: Notch filter Q factor
             epoch_duration: Epoch length in seconds (4.0 for model)
-            use_car: Apply CAR spatial filter (default False - model trained on raw data)
-            apply_bandpass: Apply bandpass filter (default False - model trained on raw data)
-            apply_zscore: Apply z-score normalization (default False - model trained on raw data)
+            use_car: Apply CAR (default False - use apply_laplacian instead)
+            apply_laplacian: Apply Small Laplacian spatial filter (default False - disabled)
+            apply_bandpass: Apply 8-30 Hz bandpass filter (default False - disabled, model trained on raw data)
+            apply_zscore: Apply z-score normalization (default False - disabled, model trained on raw data)
             scaling_factor: Scale factor to convert to microvolts
-            normalization_alpha: EMA factor for normalization
+            normalization_alpha: EMA factor for normalization stats
             realtime_mode: If True, use stateful filters for streaming
         """
         self.input_rate = input_rate
@@ -205,6 +210,7 @@ class NPGPreprocessor:
         self.filter_high = filter_high
         self.apply_notch = apply_notch
         self.apply_bandpass = apply_bandpass
+        self.apply_laplacian = apply_laplacian
         self.apply_zscore = apply_zscore
         self.notch_freq = notch_freq
         self.notch_q = notch_q
@@ -271,7 +277,7 @@ class NPGPreprocessor:
             self.logger.info(f"  Notch: {self.notch_freq} Hz (Q={self.notch_q})")
         self.logger.info(f"  === Optional preprocessing (to match training) ===")
         self.logger.info(f"  Bandpass filter: {'ENABLED (' + str(filter_low) + '-' + str(filter_high) + ' Hz)' if apply_bandpass else 'DISABLED'}")
-        self.logger.info(f"  CAR spatial filter: {'ENABLED' if use_car else 'DISABLED'}")
+        self.logger.info(f"  Spatial filter: {'Small Laplacian' if apply_laplacian else ('CAR' if use_car else 'DISABLED')}")
         self.logger.info(f"  Z-score normalization: {'ENABLED' if apply_zscore else 'DISABLED'}")
         self.logger.info(f"  Epoch: {epoch_duration}s ({self.output_epoch_samples} samples)")
     
@@ -569,14 +575,17 @@ class NPGPreprocessor:
         # === OPTIONAL PREPROCESSING (disabled by default to match raw-data training) ===
         # The original 73.64% model was trained on RAW data without these steps
         
-        # 5. Bandpass filter (8-30 Hz) - OPTIONAL
+        # 5. Bandpass filter (8-30 Hz)
         if self.apply_bandpass:
             filtered = self.bandpass_filter(notched, stateful=self.realtime_mode)
         else:
             filtered = notched
-        
-        # 6. Apply CAR spatial filter - OPTIONAL
-        if self.use_car:
+
+        # 6. Spatial filter: Small Laplacian (preferred) or CAR
+        # Small Laplacian MUST match _apply_small_laplacian() in bci4_2b_loader_v2.py
+        if self.apply_laplacian:
+            spatial = self.apply_small_laplacian(filtered)
+        elif self.use_car:
             spatial = self.apply_car(filtered)
         else:
             spatial = filtered

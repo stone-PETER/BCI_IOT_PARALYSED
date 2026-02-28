@@ -23,7 +23,12 @@ python npg_realtime_bci.py --confidence 0.6
 python npg_realtime_bci.py --direct --port COM6 --confidence 0.6
 python npg_realtime_bci.py --direct --port COM3 --baudrate 115200
 
+for IoT connect
+cd CODE
+python test_iot_bci_states.py 
 
-
+to rollback to 68.89
+Copy-Item "C:\Users\DELL\BCI_IOT_PARALYSED\CODE\models\eegnet_2class_bci2b_20260213_134009.keras" "C:\Users\DELL\BCI_IOT_PARALYSED\CODE\models\best\eegnet_2class_bci2b.keras" -Force
 prompt
+
 so i build a motor imagery model which performs 2 class(left hand, right hand) motor imagery in an eegnet model. the model was trained using bci competition 4 2b dataset. i stream live eeg input from a neuro playground lite (sold by upside down labs) from the positions c3 cz c4 in real time through the model to obtain real time motor imagery classification. im recieving output with 50-60 percent confidence for both hands simultaneously where the hand im moving usually has higher confidence than the hand im not moving. how can i improve this. how should i be moving my hands. how can i average the output to obtain correct classification. how can i improve the model further. how can i calibrate the model for my personal eeg
