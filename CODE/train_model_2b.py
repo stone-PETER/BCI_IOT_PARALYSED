@@ -83,34 +83,30 @@ class EEGNetTrainer2B:
         """Load and prepare BCI IV 2b data for training."""
         self.logger.info("Loading BCI Competition IV Dataset 2b...")
         
-        # Load all subjects' training data (session T only)
-        all_epochs, all_labels = self.data_loader.load_all_subjects(
-            sessions=['T']  # Augmentation is NOT applied here — see below
-        )
+        # T sessions → train + val (same recording day, split 85/15)
+        # E sessions → test only (different recording day = honest real-world evaluation)
+        self.logger.info("Loading T sessions (train + val)...")
+        t_epochs, t_labels = self.data_loader.load_all_subjects(sessions=['T'])
+        self.logger.info(f"T sessions: {t_epochs.shape}")
 
-        self.logger.info(f"Loaded {len(all_epochs)} total epochs (real data only)")
-        self.logger.info(f"Epochs shape: {all_epochs.shape}")
+        self.logger.info("Loading E sessions (test only — separate recording day)...")
+        e_epochs, e_labels = self.data_loader.load_all_subjects(sessions=['E'])
+        self.logger.info(f"E sessions: {e_epochs.shape}")
 
         # Reshape for EEGNet: (trials, channels, samples, 1)
-        X = all_epochs.transpose(0, 2, 1)[..., np.newaxis]
+        X_T = t_epochs.transpose(0, 2, 1)[..., np.newaxis]
+        X_test = e_epochs.transpose(0, 2, 1)[..., np.newaxis]
+        y_test_raw = e_labels
 
-        # Split BEFORE augmentation so synthetic data never enters val/test
-        X_train_val, X_test, y_train_val, y_test_raw = train_test_split(
-            X, all_labels,
-            test_size=0.2,
-            random_state=42,
-            stratify=all_labels
-        )
-
+        # Split T into train / val — no augmentation yet
         X_train_raw, X_val, y_train_raw, y_val_raw = train_test_split(
-            X_train_val, y_train_val,
-            test_size=0.2,
+            X_T, t_labels,
+            test_size=0.15,
             random_state=42,
-            stratify=y_train_val
+            stratify=t_labels
         )
 
         # Apply augmentation ONLY to the training split.
-        # data_loader.apply_augmentation() internally checks the config flag.
         # Convert to (N, samples, channels) for the augmenter, then re-reshape.
         X_train_2d = X_train_raw[:, :, :, 0].transpose(0, 2, 1)   # (N, samples, ch)
         X_aug_2d, y_aug = self.data_loader.apply_augmentation(
@@ -123,10 +119,10 @@ class EEGNetTrainer2B:
         y_val  = to_categorical(y_val_raw,  num_classes=2)
         y_test = to_categorical(y_test_raw, num_classes=2)
 
-        self.logger.info(f"Data splits (clean — no augmented data in val/test):")
-        self.logger.info(f"  - Training: X={X_train.shape}, y={y_train.shape}")
+        self.logger.info(f"Data splits (T=train/val, E=test — no leakage):")
+        self.logger.info(f"  - Training:   X={X_train.shape}, y={y_train.shape}")
         self.logger.info(f"  - Validation: X={X_val.shape}, y={y_val.shape}")
-        self.logger.info(f"  - Test: X={X_test.shape}, y={y_test.shape}")
+        self.logger.info(f"  - Test (E):   X={X_test.shape}, y={y_test.shape}")
 
         return {
             'X_train': X_train,
