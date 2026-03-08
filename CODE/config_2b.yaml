@@ -10,7 +10,7 @@ model:
   chans: 3 # Only 3 channels (C3, Cz, C4)
   samples: 1000 # 4 seconds at 250 Hz
   nb_classes: 2 # Binary: left hand vs right hand
-  kernLength: 64
+  kernLength: 128  # 512ms window at 250Hz — captures full mu/beta rhythm cycles (was 64)
   F1: 16
   D: 2
   F2: 32
