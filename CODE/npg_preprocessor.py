@@ -174,6 +174,7 @@ class NPGPreprocessor:
                  apply_zscore: bool = False,     # Disabled: training on raw data; no normalization
                  scaling_factor: float = 1.0,
                  normalization_alpha: float = 0.95,
+                 apply_dc_centering: bool = True,  # DC-centering: CRITICAL for NPG ADC offset removal
                  realtime_mode: bool = True):
         """
         Initialize preprocessor.
@@ -212,6 +213,7 @@ class NPGPreprocessor:
         self.apply_bandpass = apply_bandpass
         self.apply_laplacian = apply_laplacian
         self.apply_zscore = apply_zscore
+        self.apply_dc_centering = apply_dc_centering  # DC-centering: remove NPG ADC offset
         self.notch_freq = notch_freq
         self.notch_q = notch_q
         self.epoch_duration = epoch_duration
@@ -279,6 +281,7 @@ class NPGPreprocessor:
         self.logger.info(f"  Bandpass filter: {'ENABLED (' + str(filter_low) + '-' + str(filter_high) + ' Hz)' if apply_bandpass else 'DISABLED'}")
         self.logger.info(f"  Spatial filter: {'Small Laplacian' if apply_laplacian else ('CAR' if use_car else 'DISABLED')}")
         self.logger.info(f"  Z-score normalization: {'ENABLED' if apply_zscore else 'DISABLED'}")
+        self.logger.info(f"  DC centering: {'ENABLED (removes NPG ADC offset ~1675)' if apply_dc_centering else 'DISABLED'}")
         self.logger.info(f"  Epoch: {epoch_duration}s ({self.output_epoch_samples} samples)")
     
     def reset_filters(self):
@@ -343,6 +346,26 @@ class NPGPreprocessor:
             Data scaled to microvolts
         """
         return data * self.scaling_factor
+    
+    def remove_dc_offset(self, data: np.ndarray) -> np.ndarray:
+        """
+        Remove DC offset (per-channel mean) from the signal.
+        
+        CRITICAL FIX for NPG Lite domain mismatch:
+        - NPG ADC outputs raw 12-bit values (~1600-1750 range, mean ~1675)
+        - Training data (BCI 2b) has zero-centered distribution
+        - Without DC-centering, model inputs saturate model predictions to one class
+        
+        This centers each channel around zero by subtracting per-channel mean.
+        Applied per-epoch to handle ADC offset variations.
+        
+        Args:
+            data: Input data (n_samples, n_channels)
+        
+        Returns:
+            DC-centered data (zero mean per channel)
+        """
+        return data - np.mean(data, axis=0, keepdims=True)
     
     def apply_small_laplacian(self, data: np.ndarray) -> np.ndarray:
         """
@@ -562,6 +585,10 @@ class NPGPreprocessor:
         
         # 2. Scale to microvolts (match training data range)
         scaled = self.scale_to_microvolts(selected)
+        
+        # 2b. DC-center the signal (remove NPG ADC offset bias)
+        if self.apply_dc_centering:
+            scaled = self.remove_dc_offset(scaled)
         
         # 3. Anti-alias and resample 500 → 250 Hz (ALWAYS REQUIRED)
         resampled = self.resample_signal(scaled)

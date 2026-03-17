@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
 Smiley Feedback Demo
-Demonstrates the running integral classifier that reduces prediction flickering
+Demonstrates the running integral classifier that reduces prediction flickering.
 
-Run with default settings (Leaky Accumulator):
-    python test_smiley_feedback.py
+Run with direct confidence-threshold mode:
+    python test_smiley_feedback.py --direct
 
 Run with Smiley Feedback:
     python test_smiley_feedback.py --smiley-feedback
@@ -22,7 +22,7 @@ import sys
 # Add CODE directory to path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from npg_inference import NPGInferenceEngine, SmileyFeedback
+from npg_inference import NPGInferenceEngine
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -74,16 +74,14 @@ def generate_synthetic_epoch(class_label=0, strength=0.8, noise_level=0.2):
     return data_reshaped
 
 
-def test_accumulator_mode():
-    """Test with Leaky Accumulator (default mode)."""
+def test_direct_mode():
+    """Test with direct confidence-thresholded outputs."""
     print("\n" + "="*70)
-    print("Testing LEAKY ACCUMULATOR Mode (Default)")
+    print("Testing DIRECT THRESHOLD Mode")
     print("="*70)
     
     engine = NPGInferenceEngine(
-        use_accumulator=True,
-        accumulator_threshold=2.0,
-        accumulator_decay=0.15,
+        confidence_threshold=0.65,
         use_smiley_feedback=False
     )
     
@@ -97,17 +95,13 @@ def test_accumulator_mode():
         else:
             data = generate_synthetic_epoch(class_label=0, strength=0.7 + np.random.rand()*0.2)
         
-        # Predict with accumulator
-        class_idx, confidence, class_name, is_triggered = engine.predict_with_accumulator(data)
-        
-        # Get bucket status
-        status = engine.get_accumulator_status()
-        left_pct = status['buckets']['LEFT_HAND']['percent_full']
-        right_pct = status['buckets']['RIGHT_HAND']['percent_full']
-        
-        trigger_icon = "🎯" if is_triggered else "  "
+          class_idx, confidence, class_name = engine.predict_smoothed(data)
+          is_triggered = confidence >= engine.confidence_threshold
+          output_name = class_name if is_triggered else "UNCERTAIN"
+
+          trigger_icon = "🎯" if is_triggered else "  "
         print(f"{i+1:2}. {trigger_icon} {class_name:12} | Conf: {confidence:5.1%} | "
-              f"Buckets: L={left_pct:3.0f}% R={right_pct:3.0f}%")
+              f"Output: {output_name:12}")
         
         time.sleep(0.1)
     
@@ -124,8 +118,7 @@ def test_smiley_feedback_mode():
         use_smiley_feedback=True,
         smiley_window_duration=2.0,
         smiley_threshold=3.5,
-        smiley_prediction_rate=2.2,
-        use_accumulator=False
+        smiley_prediction_rate=2.2
     )
     
     print("\nSimulating 20 predictions with varying confidence...")
@@ -160,24 +153,22 @@ def test_smiley_feedback_mode():
 
 
 def compare_modes():
-    """Compare both modes side-by-side."""
+    """Compare direct threshold vs smiley feedback side-by-side."""
     print("\n" + "="*70)
-    print("COMPARING ACCUMULATOR vs SMILEY FEEDBACK")
+    print("COMPARING DIRECT THRESHOLD vs SMILEY FEEDBACK")
     print("="*70)
     
-    engine_acc = NPGInferenceEngine(
-        use_accumulator=True,
+    engine_direct = NPGInferenceEngine(
         use_smiley_feedback=False
     )
     
     engine_smiley = NPGInferenceEngine(
         use_smiley_feedback=True,
-        use_accumulator=False,
         smiley_threshold=3.5
     )
     
     print("\nGenerating same sequence for both...\n")
-    print(f"{'#':>3} | {'Accumulator':<25} | {'Smiley Feedback':<25}")
+    print(f"{'#':>3} | {'Direct Threshold':<25} | {'Smiley Feedback':<25}")
     print("-" * 70)
     
     # Generate fixed seed for reproducibility
@@ -190,36 +181,38 @@ def compare_modes():
         else:
             data = generate_synthetic_epoch(class_label=0, strength=0.7 + np.random.rand()*0.2)
         
-        # Accumulator prediction
-        _, conf_acc, name_acc, trig_acc = engine_acc.predict_with_accumulator(data)
-        icon_acc = "🎯" if trig_acc else "  "
+        # Direct prediction
+        _, conf_direct, name_direct = engine_direct.predict_smoothed(data)
+        trig_direct = conf_direct >= engine_direct.confidence_threshold
+        icon_direct = "🎯" if trig_direct else "  "
+        out_direct = name_direct if trig_direct else "UNCERTAIN"
         
         # Smiley prediction
         _, conf_smiley, name_smiley, trig_smiley, sum_smiley = \
             engine_smiley.predict_with_smiley_feedback(data)
         icon_smiley = "🎯" if trig_smiley else "  "
         
-        print(f"{i+1:2}. | {icon_acc} {name_acc:12} {conf_acc:5.1%} | "
+          print(f"{i+1:2}. | {icon_direct} {out_direct:12} {conf_direct:5.1%} | "
               f"{icon_smiley} {name_smiley:12} {conf_smiley:5.1%}")
         
         time.sleep(0.1)
     
     print("\n" + "="*70)
     print("Key Differences:")
-    print("- Accumulator: Gradually fills 'buckets', decays over time")
+    print("- Direct threshold: Each epoch decides immediately from smoothed confidence")
     print("- Smiley Feedback: Integrates probabilities over fixed window")
-    print("- Both reduce flickering compared to frame-by-frame classification")
+    print("- Smiley Feedback generally reduces flickering more than direct threshold")
     print("="*70)
 
 
 if __name__ == "__main__":
     import argparse
     
-    parser = argparse.ArgumentParser(description='Test Smiley Feedback vs Accumulator')
+    parser = argparse.ArgumentParser(description='Test Smiley Feedback vs direct threshold mode')
     parser.add_argument('--smiley-feedback', action='store_true',
                        help='Test Smiley Feedback mode')
-    parser.add_argument('--accumulator', action='store_true',
-                       help='Test Accumulator mode')
+    parser.add_argument('--direct', action='store_true',
+                       help='Test direct confidence-threshold mode')
     parser.add_argument('--compare', action='store_true',
                        help='Compare both modes')
     
@@ -229,10 +222,10 @@ if __name__ == "__main__":
         compare_modes()
     elif args.smiley_feedback:
         test_smiley_feedback_mode()
-    elif args.accumulator:
-        test_accumulator_mode()
+    elif args.direct:
+        test_direct_mode()
     else:
         # Default: show both
-        test_accumulator_mode()
+        test_direct_mode()
         test_smiley_feedback_mode()
         compare_modes()

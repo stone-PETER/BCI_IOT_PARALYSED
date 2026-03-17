@@ -23,8 +23,7 @@ def test_baseline_calibration():
     print("\n1. Creating inference engine...")
     engine = NPGInferenceEngine(
         confidence_threshold=0.65,
-        smoothing_window=8,
-        use_accumulator=False  # Disable for clearer testing
+        smoothing_window=8
     )
     
     # Create preprocessor

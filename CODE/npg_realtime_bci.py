@@ -62,10 +62,6 @@ class NPGRealtimeBCI:
                  smoothing_window: int = 8,
                  window_overlap: float = 0.5,
                  simulate: bool = False,
-                 use_accumulator: bool = True,
-                 accumulator_threshold: float = 2.0,
-                 accumulator_decay: float = 0.15,
-                 neutral_zone: tuple = (0.45, 0.55),
                  temperature: float = 1.5,
                  use_calibration: bool = True,
                  use_smiley_feedback: bool = False,
@@ -90,10 +86,6 @@ class NPGRealtimeBCI:
             smoothing_window: Number of predictions to smooth (default: 8)
             window_overlap: Overlap ratio for sliding windows (0-1)
             simulate: Use simulator instead of real device
-            use_accumulator: Use Leaky Accumulator for stable commands (default: True)
-            accumulator_threshold: Bucket level to trigger command (default: 2.0)
-            accumulator_decay: Decay rate per update (default: 0.15)
-            neutral_zone: Confidence range treated as uncertain (default: 0.45-0.55)
             temperature: Temperature for calibrated confidence (default: 1.5)
             use_calibration: Whether to use temperature-scaled confidence
             use_smiley_feedback: Use Smiley Feedback running integral (default: False)
@@ -104,7 +96,6 @@ class NPGRealtimeBCI:
         """
         self.simulate = simulate
         self.confidence_threshold = confidence_threshold
-        self.use_accumulator = use_accumulator
         self.use_smiley_feedback = use_smiley_feedback
         self.is_running = False
         self.neutral_threshold = neutral_threshold
@@ -154,21 +145,18 @@ class NPGRealtimeBCI:
             output_rate=OUTPUT_SAMPLING_RATE,
             epoch_duration=EPOCH_DURATION,
             use_car=False,  # Model trained on raw data, no CAR
+            apply_laplacian=True,  # Enable Cz-referenced C3/C4 spatial filtering
             apply_bandpass=False,  # Model trained on raw data
             apply_zscore=False,  # Model trained on raw data
             realtime_mode=True
         )
-        self.logger.info("   ✅ Preprocessor ready (raw data preprocessing matching training)")
+        self.logger.info("   ✅ Preprocessor ready (small Laplacian enabled: C3/C4 referenced to Cz)")
         
         # Inference engine with calibration
         self.inference = NPGInferenceEngine(
             model_path=model_path,
             confidence_threshold=confidence_threshold,
             smoothing_window=smoothing_window,
-            use_accumulator=use_accumulator,
-            accumulator_threshold=accumulator_threshold,
-            accumulator_decay=accumulator_decay,
-            neutral_zone=neutral_zone,
             temperature=temperature,
             use_calibration=use_calibration,
             use_smiley_feedback=use_smiley_feedback,
@@ -206,8 +194,8 @@ class NPGRealtimeBCI:
         self.total_epochs_processed = 0
         self.start_time = None
         
-        # Try to load saved baseline bias
-        self._load_baseline_bias()
+        # NOTE: Baseline bias loading is deferred to main() after CLI args are parsed
+        # This allows --no-bias-correction flag to prevent bias loading
         
         self.logger.info("="*70)
     
@@ -365,7 +353,7 @@ class NPGRealtimeBCI:
             if preprocessed.shape != (1, N_CHANNELS, OUTPUT_EPOCH_SAMPLES, 1):
                 self.logger.warning(f"Preprocessed shape mismatch: {preprocessed.shape}")
             
-            # Inference with accumulator or smiley feedback
+            # Inference with confidence threshold or smiley feedback
             if self.use_smiley_feedback:
                 # Use Smiley Feedback running integral
                 class_idx, confidence, class_name, is_triggered, winning_sum = \
@@ -377,21 +365,8 @@ class NPGRealtimeBCI:
                 else:
                     command = "UNCERTAIN"
                     self.command_counts["UNCERTAIN"] += 1
-                    
-            elif self.use_accumulator:
-                # Use Leaky Accumulator
-                class_idx, confidence, class_name, is_triggered = \
-                    self.inference.predict_with_accumulator(preprocessed)
-                
-                # Only count as command if accumulator triggered
-                if is_triggered:
-                    command = class_name
-                    self.command_counts[command] += 1
-                else:
-                    command = "UNCERTAIN"
-                    self.command_counts["UNCERTAIN"] += 1
             else:
-                # Fallback: simple smoothed prediction
+                # Default: simple smoothed prediction
                 class_idx, confidence, class_name = self.inference.predict_smoothed(preprocessed)
                 
                 if confidence >= self.confidence_threshold:
@@ -561,7 +536,7 @@ class NPGRealtimeBCI:
         else:
             icon = "❓"
         
-        # Add accumulator or smiley feedback info
+        # Add smiley feedback info
         feedback_info = ""
         if self.use_smiley_feedback:
             status = self.inference.get_smiley_feedback_status()
@@ -570,12 +545,6 @@ class NPGRealtimeBCI:
                 left_pct = sums['LEFT_HAND']['percent_to_trigger']
                 right_pct = sums['RIGHT_HAND']['percent_to_trigger']
                 feedback_info = f" | Integral: L={left_pct:3.0f}% R={right_pct:3.0f}%"
-        elif self.use_accumulator:
-            status = self.inference.get_accumulator_status()
-            if status.get('enabled'):
-                left_pct = status['buckets']['LEFT_HAND']['percent_full']
-                right_pct = status['buckets']['RIGHT_HAND']['percent_full']
-                feedback_info = f" | Buckets: L={left_pct:3.0f}% R={right_pct:3.0f}%"
         
         self.logger.info(
             f"{icon} {command:12} | "
@@ -589,7 +558,7 @@ class NPGRealtimeBCI:
         epochs_per_sec = self.total_epochs_processed / runtime
         avg_proc_time = np.mean(self.processing_times) if self.processing_times else 0
         
-        # Add accumulator or smiley feedback info
+        # Add smiley feedback info
         feedback_info = ""
         if self.use_smiley_feedback:
             status = self.inference.get_smiley_feedback_status()
@@ -598,12 +567,6 @@ class NPGRealtimeBCI:
                 left_pct = sums['LEFT_HAND']['percent_to_trigger']
                 right_pct = sums['RIGHT_HAND']['percent_to_trigger']
                 feedback_info = f" | Integral: L={left_pct:3.0f}% R={right_pct:3.0f}%"
-        elif self.use_accumulator:
-            status = self.inference.get_accumulator_status()
-            if status.get('enabled'):
-                left_pct = status['buckets']['LEFT_HAND']['percent_full']
-                right_pct = status['buckets']['RIGHT_HAND']['percent_full']
-                feedback_info = f" | Buckets: L={left_pct:3.0f}% R={right_pct:3.0f}%"
         
         # Add uncertainty info
         avg_uncertainty = self.inference.get_average_uncertainty()
@@ -834,16 +797,6 @@ def main():
                        help='Smoothing window size for predictions (default: 8)')
     parser.add_argument('--overlap', type=float, default=0.5,
                        help='Window overlap ratio (0-1, default: 0.5)')
-    parser.add_argument('--no-accumulator', action='store_true',
-                       help='Disable Leaky Accumulator (use simple threshold instead)')
-    parser.add_argument('--acc-threshold', type=float, default=2.0,
-                       help='Accumulator trigger threshold (default: 2.0)')
-    parser.add_argument('--acc-decay', type=float, default=0.15,
-                       help='Accumulator decay rate per update (default: 0.15)')
-    parser.add_argument('--neutral-low', type=float, default=0.45,
-                       help='Neutral zone lower bound (default: 0.45)')
-    parser.add_argument('--neutral-high', type=float, default=0.55,
-                       help='Neutral zone upper bound (default: 0.55)')
     parser.add_argument('--smiley-feedback', action='store_true',
                        help='Use Smiley Feedback running integral (BCI Competition strategy)')
     parser.add_argument('--smiley-window', type=float, default=2.0,
@@ -933,10 +886,6 @@ def main():
         print("   Train the model first with: python train_model_2b.py")
         sys.exit(1)
     
-    # Create neutral zone tuple
-    neutral_zone = (args.neutral_low, args.neutral_high)
-    use_accumulator = not args.no_accumulator
-    
     # Create BCI system based on mode
     if args.simulate:
         # Simulator mode
@@ -946,10 +895,6 @@ def main():
             smoothing_window=args.smoothing,
             window_overlap=args.overlap,
             simulate=True,
-            use_accumulator=use_accumulator,
-            accumulator_threshold=args.acc_threshold,
-            accumulator_decay=args.acc_decay,
-            neutral_zone=neutral_zone,
             use_smiley_feedback=args.smiley_feedback,
             smiley_window_duration=args.smiley_window,
             smiley_threshold=args.smiley_threshold,
@@ -972,10 +917,6 @@ def main():
             smoothing_window=args.smoothing,
             window_overlap=args.overlap,
             simulate=False,
-            use_accumulator=use_accumulator,
-            accumulator_threshold=args.acc_threshold,
-            accumulator_decay=args.acc_decay,
-            neutral_zone=neutral_zone,
             use_smiley_feedback=args.smiley_feedback,
             smiley_window_duration=args.smiley_window,
             smiley_threshold=args.smiley_threshold,
@@ -1000,10 +941,6 @@ def main():
             smoothing_window=args.smoothing,
             window_overlap=args.overlap,
             simulate=False,
-            use_accumulator=use_accumulator,
-            accumulator_threshold=args.acc_threshold,
-            accumulator_decay=args.acc_decay,
-            neutral_zone=neutral_zone,
             use_smiley_feedback=args.smiley_feedback,
             smiley_window_duration=args.smiley_window,
             smiley_threshold=args.smiley_threshold,

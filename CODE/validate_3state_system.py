@@ -134,7 +134,6 @@ class ThreeStateValidator:
         self.inference = NPGInferenceEngine(
             model_path=model_path,
             confidence_threshold=0.5,  # Lower for validation
-            use_accumulator=False,  # Disable for direct validation
             neutral_threshold=neutral_threshold
         )
         

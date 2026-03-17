@@ -6,7 +6,6 @@ Uses trained BCI IV 2b model (binary classification: left hand vs right hand)
 Model accuracy: ~73.6% on test set
 
 Features:
-- Leaky Integrator/Accumulator for stable command triggering
 - Neutral zone to filter uncertain predictions
 - Configurable thresholds and decay rates
 - FIXED: Temperature-scaled calibrated confidence
@@ -226,140 +225,6 @@ class SmileyFeedback:
         }
 
 
-class LeakyAccumulator:
-    """
-    Leaky Integrator/Accumulator for stable BCI command triggering.
-    
-    Each class has a "bucket" that accumulates confidence scores.
-    Buckets leak (decay) over time. Commands are triggered only when
-    a bucket overflows the threshold.
-    
-    Benefits:
-    - Filters out noisy single-epoch predictions
-    - Requires sustained evidence for command triggering
-    - Prevents rapid command switching
-    """
-    
-    def __init__(self,
-                 n_classes: int = 2,
-                 trigger_threshold: float = 2.0,
-                 decay_rate: float = 0.15,
-                 neutral_zone: Tuple[float, float] = (0.45, 0.55),
-                 min_confidence_to_add: float = 0.0):
-        """
-        Initialize Leaky Accumulator.
-        
-        Args:
-            n_classes: Number of classes to track
-            trigger_threshold: Bucket level to trigger command (default: 2.0)
-                              Higher = more evidence needed
-            decay_rate: How much bucket leaks per update (0-1, default: 0.15)
-                       Higher = faster decay, requires faster repeated confidence
-            neutral_zone: (low, high) confidence range treated as uncertain
-                         Predictions in this range don't add to buckets
-            min_confidence_to_add: Minimum confidence to add to bucket
-        """
-        self.n_classes = n_classes
-        self.trigger_threshold = trigger_threshold
-        self.decay_rate = decay_rate
-        self.neutral_zone = neutral_zone
-        self.min_confidence_to_add = min_confidence_to_add
-        
-        # Accumulator buckets for each class
-        self.buckets = np.zeros(n_classes)
-        
-        # Track triggered commands
-        self.last_triggered_class = -1
-        self.trigger_count = 0
-        self.update_count = 0
-        
-        # Cooldown to prevent rapid re-triggering
-        self.cooldown_updates = 3
-        self.updates_since_trigger = 999
-    
-    def update(self, class_idx: int, confidence: float) -> Tuple[int, bool, float]:
-        """
-        Update accumulator with new prediction.
-        
-        Args:
-            class_idx: Predicted class index (or 2 for NEUTRAL in 3-state mode)
-            confidence: Prediction confidence (0-1)
-        
-        Returns:
-            Tuple of (triggered_class, is_triggered, bucket_level)
-            triggered_class: -1 if no trigger, else class index
-            is_triggered: True if a command should be triggered
-            bucket_level: Current level of the winning bucket
-        """
-        self.update_count += 1
-        self.updates_since_trigger += 1
-        
-        # Apply decay to all buckets (leak)
-        self.buckets *= (1.0 - self.decay_rate)
-        
-        # Check if prediction is NEUTRAL (3-state mode)
-        if class_idx == 2:  # NEUTRAL state
-            # Don't add to any bucket, just let them decay
-            # This naturally handles the neutral zone
-            winning_bucket = np.max(self.buckets)
-            return -1, False, float(winning_bucket)
-        
-        # Check if prediction is in neutral zone (2-state mode)
-        is_neutral = self.neutral_zone[0] <= confidence <= self.neutral_zone[1]
-        
-        # Add confidence to bucket if not neutral and above minimum
-        if not is_neutral and confidence >= self.min_confidence_to_add and class_idx >= 0:
-            # Scale contribution by how far outside neutral zone
-            if confidence > self.neutral_zone[1]:
-                # High confidence - add scaled amount
-                contribution = (confidence - self.neutral_zone[1]) / (1.0 - self.neutral_zone[1])
-                contribution = contribution * confidence  # Scale by raw confidence too
-            else:
-                # Low confidence (other class likely) - add less
-                contribution = confidence * 0.5
-            
-            self.buckets[class_idx] += contribution
-        
-        # Check for trigger
-        winning_class = np.argmax(self.buckets)
-        winning_level = self.buckets[winning_class]
-        
-        is_triggered = (
-            winning_level >= self.trigger_threshold and
-            self.updates_since_trigger >= self.cooldown_updates
-        )
-        
-        if is_triggered:
-            self.last_triggered_class = winning_class
-            self.trigger_count += 1
-            self.updates_since_trigger = 0
-            # Reset the triggered bucket partially (not fully, to allow sustained commands)
-            self.buckets[winning_class] *= 0.5
-            return winning_class, True, winning_level
-        
-        return -1, False, winning_level
-    
-    def get_bucket_levels(self) -> np.ndarray:
-        """Get current bucket levels."""
-        return self.buckets.copy()
-    
-    def reset(self):
-        """Reset all buckets and counters."""
-        self.buckets = np.zeros(self.n_classes)
-        self.last_triggered_class = -1
-        self.updates_since_trigger = 999
-    
-    def get_statistics(self) -> Dict:
-        """Get accumulator statistics."""
-        return {
-            'total_updates': self.update_count,
-            'total_triggers': self.trigger_count,
-            'trigger_rate': self.trigger_count / max(1, self.update_count),
-            'current_buckets': self.buckets.tolist(),
-            'last_triggered_class': self.last_triggered_class
-        }
-
-
 class NPGInferenceEngine:
     """
     Real-time inference engine for NPG Lite motor imagery classification.
@@ -377,10 +242,6 @@ class NPGInferenceEngine:
                  model_path: str = None,
                  confidence_threshold: float = 0.65,
                  smoothing_window: int = 8,
-                 use_accumulator: bool = True,
-                 accumulator_threshold: float = 2.0,
-                 accumulator_decay: float = 0.15,
-                 neutral_zone: Tuple[float, float] = (0.45, 0.55),
                  temperature: float = 1.5,
                  use_calibration: bool = True,
                  use_smiley_feedback: bool = False,
@@ -397,10 +258,6 @@ class NPGInferenceEngine:
             confidence_threshold: Minimum confidence for valid prediction (0-1)
                                  Increased default to 0.65 for more reliable commands
             smoothing_window: Number of predictions to smooth over (default: 8)
-            use_accumulator: Whether to use Leaky Accumulator for command triggering
-            accumulator_threshold: Bucket level to trigger command (default: 2.0)
-            accumulator_decay: Decay rate per update (default: 0.15)
-            neutral_zone: (low, high) confidence range treated as uncertain
             temperature: Temperature for calibrated confidence (default: 1.5)
             use_calibration: Whether to use temperature-scaled confidence
             use_smiley_feedback: Whether to use Smiley Feedback running integral
@@ -412,7 +269,6 @@ class NPGInferenceEngine:
         """
         self.confidence_threshold = confidence_threshold
         self.smoothing_window = smoothing_window
-        self.use_accumulator = use_accumulator
         self.use_calibration = use_calibration
         self.use_smiley_feedback = use_smiley_feedback
         self.neutral_threshold = neutral_threshold
@@ -425,6 +281,7 @@ class NPGInferenceEngine:
         self.class_names_3state = ['LEFT_HAND', 'RIGHT_HAND', 'NEUTRAL']
         
         # Load model
+        #model path main
         if model_path is None:
             model_path = Path(__file__).parent / 'models' / 'best' / 'eegnet_2class_bci2b.keras'
         
@@ -450,14 +307,6 @@ class NPGInferenceEngine:
         else:
             self.smiley_feedback = None
         
-        # Leaky Accumulator for stable command triggering
-        self.accumulator = LeakyAccumulator(
-            n_classes=len(self.class_names),
-            trigger_threshold=accumulator_threshold,
-            decay_rate=accumulator_decay,
-            neutral_zone=neutral_zone
-        )
-        
         # Baseline bias correction (for 2-class forced choice)
         self.baseline_bias = None  # Will be [left_bias, right_bias] after calibration
         self.calibration_predictions = []  # Buffer for calibration data
@@ -479,11 +328,6 @@ class NPGInferenceEngine:
         self.logger.info(f"  Smiley Feedback: {self.use_smiley_feedback}")
         if self.use_smiley_feedback:
             self.logger.info(f"    Window: {smiley_window_duration}s, Threshold: {smiley_threshold}, Rate: {smiley_prediction_rate} Hz")
-        self.logger.info(f"  Accumulator enabled: {self.use_accumulator}")
-        if self.use_accumulator:
-            self.logger.info(f"  Accumulator threshold: {accumulator_threshold}")
-            self.logger.info(f"  Accumulator decay: {accumulator_decay}")
-            self.logger.info(f"  Neutral zone: {neutral_zone}")
     
     def _load_model(self):
         """Load the trained model."""
@@ -817,50 +661,6 @@ class NPGInferenceEngine:
         
         return smoothed_class_idx, float(smoothed_confidence), smoothed_class_name
     
-    def predict_with_accumulator(self, preprocessed_data: np.ndarray) -> Tuple[int, float, str, bool]:
-        """
-        Run inference with Leaky Accumulator for stable command triggering.
-        
-        This method:
-        1. Gets smoothed prediction
-        2. Feeds it to the accumulator
-        3. Only returns a valid command when accumulator triggers
-        
-        Args:
-            preprocessed_data: Model-ready data (1, 3, 1000, 1)
-        
-        Returns:
-            Tuple of (class_idx, confidence, class_name, is_triggered)
-            - class_idx: -1 if no command triggered, else predicted class
-            - confidence: Prediction confidence
-            - class_name: "UNCERTAIN" if no trigger, else class name
-            - is_triggered: True if accumulator triggered a command
-        """
-        # Get smoothed prediction first
-        class_idx, confidence, class_name = self.predict_smoothed(preprocessed_data)
-        
-        if not self.use_accumulator:
-            # Without accumulator, use simple threshold
-            is_confident = confidence >= self.confidence_threshold
-            if is_confident:
-                self.triggered_commands[class_name] += 1
-            return (class_idx if is_confident else -1,
-                    confidence,
-                    class_name if is_confident else "UNCERTAIN",
-                    is_confident)
-        
-        # Update accumulator
-        triggered_class, is_triggered, bucket_level = self.accumulator.update(
-            class_idx, confidence
-        )
-        
-        if is_triggered:
-            triggered_name = self.class_names[triggered_class]
-            self.triggered_commands[triggered_name] += 1
-            return triggered_class, confidence, triggered_name, True
-        else:
-            return -1, confidence, "UNCERTAIN", False
-    
     def predict_with_smiley_feedback(self, preprocessed_data: np.ndarray) -> Tuple[int, float, str, bool, float]:
         """
         Run inference with Smiley Feedback running integral.
@@ -887,9 +687,13 @@ class NPGInferenceEngine:
             - winning_sum: Current integrated sum of winning class
         """
         if not self.use_smiley_feedback or self.smiley_feedback is None:
-            # Fall back to regular accumulator-based prediction
-            class_idx, confidence, class_name, is_triggered = self.predict_with_accumulator(preprocessed_data)
-            return class_idx, confidence, class_name, is_triggered, 0.0
+            # Fall back to regular confidence-thresholded prediction
+            class_idx, confidence, class_name = self.predict_smoothed(preprocessed_data)
+            is_triggered = confidence >= self.confidence_threshold
+            if is_triggered:
+                self.triggered_commands[class_name] += 1
+                return class_idx, confidence, class_name, True, 0.0
+            return -1, confidence, "UNCERTAIN", False, 0.0
         
         start_time = time.time()
         
@@ -930,33 +734,6 @@ class NPGInferenceEngine:
         except Exception as e:
             self.logger.error(f"Smiley Feedback prediction error: {e}")
             return -1, 0.0, "ERROR", False, 0.0
-    
-    def get_accumulator_status(self) -> Dict:
-        """
-        Get current accumulator bucket levels and status.
-        
-        Returns:
-            Dictionary with bucket levels for each class
-        """
-        if not self.use_accumulator:
-            return {'enabled': False}
-        
-        bucket_levels = self.accumulator.get_bucket_levels()
-        threshold = self.accumulator.trigger_threshold
-        
-        return {
-            'enabled': True,
-            'buckets': {
-                self.class_names[i]: {
-                    'level': float(bucket_levels[i]),
-                    'threshold': threshold,
-                    'percent_full': float(bucket_levels[i] / threshold * 100)
-                }
-                for i in range(len(self.class_names))
-            },
-            'decay_rate': self.accumulator.decay_rate,
-            'neutral_zone': self.accumulator.neutral_zone
-        }
     
     def get_smiley_feedback_status(self) -> Dict:
         """
@@ -1023,10 +800,6 @@ class NPGInferenceEngine:
             }
         }
         
-        # Add accumulator stats if enabled
-        if self.use_accumulator:
-            stats['accumulator'] = self.accumulator.get_statistics()
-        
         # Add smiley feedback stats if enabled
         if self.use_smiley_feedback and self.smiley_feedback is not None:
             stats['smiley_feedback'] = self.smiley_feedback.get_statistics()
@@ -1058,8 +831,6 @@ class NPGInferenceEngine:
         self.prediction_times.clear()
         self.prediction_buffer.clear()
         self.uncertainty_history.clear()
-        if self.use_accumulator:
-            self.accumulator.reset()
         if self.use_smiley_feedback and self.smiley_feedback is not None:
             self.smiley_feedback.reset()
     
@@ -1081,11 +852,11 @@ class NPGInferenceEngine:
 
 
 if __name__ == "__main__":
-    # Test the inference engine with Leaky Accumulator
+    # Test the inference engine with confidence-thresholded output
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
     
     print("\n" + "="*70)
-    print("Testing NPG Inference Engine with Leaky Accumulator")
+    print("Testing NPG Inference Engine")
     print("="*70)
     
     # Check if model exists
@@ -1095,15 +866,11 @@ if __name__ == "__main__":
         print(f"\n❌ Model not found: {model_path}")
         print("   Train the model first with: python train_model_2b.py")
     else:
-        # Create inference engine with Leaky Accumulator
+        # Create inference engine
         engine = NPGInferenceEngine(
             model_path=str(model_path),
             confidence_threshold=0.65,
-            smoothing_window=8,
-            use_accumulator=True,
-            accumulator_threshold=2.0,
-            accumulator_decay=0.15,
-            neutral_zone=(0.45, 0.55)
+            smoothing_window=8
         )
         
         # Create preprocessor
@@ -1139,45 +906,28 @@ if __name__ == "__main__":
         preprocessed = preprocessor.preprocess_for_model(test_data)
         print(f"   Preprocessed shape: {preprocessed.shape}")
         
-        # Run inference with accumulator
-        print("\n3. Testing Leaky Accumulator (simulating sustained left hand imagery)...")
-        print("   Bucket levels will accumulate until threshold is reached")
+        # Run inference with smoothing + threshold
+        print("\n3. Testing smoothed predictions...")
         print("-" * 60)
         
-        triggered_count = 0
+        confident_count = 0
         for i in range(15):
             # Add slight noise variation to simulate real data
             noisy_data = test_data + np.random.randn(*test_data.shape) * 1
             preprocessed = preprocessor.preprocess_for_model(noisy_data)
             
-            # Get raw smoothed prediction for reference
-            raw_class, raw_conf, raw_name = engine.predict_smoothed(preprocessed)
-            
-            # Get accumulator-based prediction (this is what you'd use in production)
-            # Note: we need to call predict_smoothed again to get fresh accumulator update
-            # Reprocess to avoid double-counting
-            preprocessed2 = preprocessor.preprocess_for_model(noisy_data + np.random.randn(*test_data.shape) * 0.5)
-            class_idx, confidence, class_name, is_triggered = engine.predict_with_accumulator(preprocessed2)
-            
-            # Get bucket status
-            status = engine.get_accumulator_status()
-            left_pct = status['buckets']['LEFT_HAND']['percent_full']
-            right_pct = status['buckets']['RIGHT_HAND']['percent_full']
-            
-            trigger_symbol = "🎯 TRIGGERED!" if is_triggered else ""
-            print(f"   #{i+1:2}: Raw={raw_name:10} ({raw_conf:.1%}) | "
-                  f"Buckets: L={left_pct:4.0f}% R={right_pct:4.0f}% | "
-                  f"Output={class_name:10} {trigger_symbol}")
-            
-            if is_triggered:
-                triggered_count += 1
+            class_idx, confidence, class_name = engine.predict_smoothed(preprocessed)
+            is_confident = confidence >= engine.confidence_threshold
+            output = class_name if is_confident else "UNCERTAIN"
+            marker = "🎯" if is_confident else ""
+            print(f"   #{i+1:2}: Smoothed={class_name:10} ({confidence:.1%}) | Output={output:10} {marker}")
+            if is_confident:
+                confident_count += 1
         
         print("-" * 60)
-        print(f"\n   Total triggers: {triggered_count}/15 predictions")
-        print("   (Accumulator requires sustained evidence before triggering)")
-        
-        # Test neutral zone behavior
-        print("\n4. Testing neutral zone (predictions around 50% shouldn't add to buckets)...")
+        print(f"\n   Confident outputs: {confident_count}/15 predictions")
+
+        print("\n4. Resetting statistics...")
         engine.reset_statistics()
         
         # Statistics
@@ -1185,11 +935,6 @@ if __name__ == "__main__":
         stats = engine.get_statistics()
         print(f"   Total predictions: {stats['total_predictions']}")
         print(f"   Triggered commands: {stats['triggered_commands']}")
-        if 'accumulator' in stats:
-            acc_stats = stats['accumulator']
-            print(f"   Accumulator updates: {acc_stats['total_updates']}")
-            print(f"   Accumulator triggers: {acc_stats['total_triggers']}")
-            print(f"   Trigger rate: {acc_stats['trigger_rate']:.1%}")
         print(f"   Avg prediction time: {stats['avg_prediction_time_ms']:.2f} ms")
         
         print("\n" + "="*70)
