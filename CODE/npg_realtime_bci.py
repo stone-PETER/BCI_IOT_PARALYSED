@@ -40,6 +40,12 @@ N_CHANNELS = 3              # C3, Cz, C4
 INPUT_EPOCH_SAMPLES = int(EPOCH_DURATION * INPUT_SAMPLING_RATE)   # 2000 @ 500 Hz
 OUTPUT_EPOCH_SAMPLES = int(EPOCH_DURATION * OUTPUT_SAMPLING_RATE) # 1000 @ 250 Hz
 
+# Binary class-gap rule:
+# LEFT  if P(LEFT)  - P(RIGHT) >= 0.05
+# RIGHT if P(RIGHT) - P(LEFT)  >= 0.05
+# else UNCERTAIN
+CLASS_ADVANTAGE_MARGIN = 0.05
+
 
 class NPGRealtimeBCI:
     """
@@ -62,6 +68,7 @@ class NPGRealtimeBCI:
                  smoothing_window: int = 8,
                  window_overlap: float = 0.5,
                  simulate: bool = False,
+                 apply_laplacian: bool = False,
                  temperature: float = 1.5,
                  use_calibration: bool = True,
                  use_smiley_feedback: bool = False,
@@ -95,6 +102,7 @@ class NPGRealtimeBCI:
             neutral_threshold: Threshold for NEUTRAL state (None = 2-state, float = 3-state)
         """
         self.simulate = simulate
+        self.apply_laplacian = apply_laplacian
         self.confidence_threshold = confidence_threshold
         self.use_smiley_feedback = use_smiley_feedback
         self.is_running = False
@@ -145,12 +153,12 @@ class NPGRealtimeBCI:
             output_rate=OUTPUT_SAMPLING_RATE,
             epoch_duration=EPOCH_DURATION,
             use_car=False,  # Model trained on raw data, no CAR
-            apply_laplacian=True,  # Enable Cz-referenced C3/C4 spatial filtering
+            apply_laplacian=self.apply_laplacian,
             apply_bandpass=False,  # Model trained on raw data
             apply_zscore=False,  # Model trained on raw data
             realtime_mode=True
         )
-        self.logger.info("   ✅ Preprocessor ready (small Laplacian enabled: C3/C4 referenced to Cz)")
+        self.logger.info("   ✅ Preprocessor ready (raw data preprocessing matching training)")
         
         # Inference engine with calibration
         self.inference = NPGInferenceEngine(
@@ -239,7 +247,10 @@ class NPGRealtimeBCI:
         self.logger.info("Starting real-time BCI processing...")
         self.logger.info("="*70)
         self.logger.info("Commands: LEFT_HAND, RIGHT_HAND")
-        self.logger.info(f"Confidence threshold: {self.confidence_threshold:.0%}")
+        if self.use_smiley_feedback:
+            self.logger.info(f"Smiley threshold: {self.inference.smiley_feedback.sum_threshold:.2f}")
+        else:
+            self.logger.info(f"Decision rule: class gap >= {CLASS_ADVANTAGE_MARGIN:.0%}")
         self.logger.info("="*70 + "\n")
         
         # Start streaming
@@ -348,6 +359,7 @@ class NPGRealtimeBCI:
             
             # Preprocess (handles resampling, filtering, normalization)
             preprocessed = self.preprocessor.preprocess_for_model(epoch_data)
+            decision_gap = None
             
             # Verify output shape
             if preprocessed.shape != (1, N_CHANNELS, OUTPUT_EPOCH_SAMPLES, 1):
@@ -368,8 +380,10 @@ class NPGRealtimeBCI:
             else:
                 # Default: simple smoothed prediction
                 class_idx, confidence, class_name = self.inference.predict_smoothed(preprocessed)
-                
-                if confidence >= self.confidence_threshold:
+
+                decision_gap = abs(2.0 * float(confidence) - 1.0)
+
+                if decision_gap >= CLASS_ADVANTAGE_MARGIN:
                     command = class_name
                     self.command_counts[command] += 1
                 else:
@@ -395,7 +409,7 @@ class NPGRealtimeBCI:
             
             # Log result
             if command_changed:
-                self._log_command(command, confidence, proc_time)
+                self._log_command(command, confidence, proc_time, decision_gap)
             elif self.total_epochs_processed % 10 == 0:
                 self._log_status()
         
@@ -466,7 +480,6 @@ class NPGRealtimeBCI:
             self.logger.info(
                 f"🚫 API BLOCK | low confidence | cmd={command} conf={confidence:.1%} < {self.api_confidence_threshold:.1%}"
             )
-            self.api_prev_command = command
             return
 
         if command == 'NEUTRAL':
@@ -475,10 +488,9 @@ class NPGRealtimeBCI:
 
             neutral_hold = now - self.api_neutral_start
             if neutral_hold >= self.api_neutral_hold:
-                self.api_armed['LEFT_HAND'] = True
-                self.api_armed['RIGHT_HAND'] = True
-                self.api_blocked_since['LEFT_HAND'] = None
-                self.api_blocked_since['RIGHT_HAND'] = None
+                for cmd in ('LEFT_HAND', 'RIGHT_HAND'):
+                    self.api_armed[cmd] = True
+                    self.api_blocked_since[cmd] = None
                 self.logger.info(f"✅ API RE-ARM | neutral hold={neutral_hold:.2f}s")
 
             self.api_prev_command = 'NEUTRAL'
@@ -490,6 +502,13 @@ class NPGRealtimeBCI:
         if command not in ('LEFT_HAND', 'RIGHT_HAND'):
             self.api_prev_command = command
             return
+
+        if (not self.api_armed[command]) and (self.api_blocked_since[command] is not None):
+            blocked_for = now - self.api_blocked_since[command]
+            if blocked_for >= self.api_rearm_timeout:
+                self.api_armed[command] = True
+                self.api_blocked_since[command] = None
+                self.logger.info(f"⏱️ API TIMEOUT RE-ARM | cmd={command} blocked_for={blocked_for:.2f}s")
 
         is_edge = self.api_prev_command != command
         if not is_edge:
@@ -508,16 +527,11 @@ class NPGRealtimeBCI:
                 self.api_blocked_since[command] = now
 
             blocked_for = now - self.api_blocked_since[command]
-            if blocked_for >= self.api_rearm_timeout:
-                self.api_armed[command] = True
-                self.api_blocked_since[command] = None
-                self.logger.info(f"⏱️ API TIMEOUT RE-ARM | cmd={command} blocked_for={blocked_for:.2f}s")
-            else:
-                self.logger.info(
-                    f"🚫 API BLOCK | not armed | cmd={command} (need NEUTRAL {self.api_neutral_hold:.1f}s or timeout {self.api_rearm_timeout:.1f}s)"
-                )
-                self.api_prev_command = command
-                return
+            self.logger.info(
+                f"🚫 API BLOCK | not armed | cmd={command} (need NEUTRAL {self.api_neutral_hold:.1f}s or timeout {self.api_rearm_timeout:.1f}s)"
+            )
+            self.api_prev_command = command
+            return
 
         self._toggle_device_for_command(command, confidence)
         self.api_last_sent_time[command] = now
@@ -525,7 +539,7 @@ class NPGRealtimeBCI:
         self.api_blocked_since[command] = now
         self.api_prev_command = command
     
-    def _log_command(self, command: str, confidence: float, proc_time: float):
+    def _log_command(self, command: str, confidence: float, proc_time: float, decision_gap: Optional[float] = None):
         """Log a new command."""
         if command == "LEFT_HAND":
             icon = "👈"
@@ -545,10 +559,14 @@ class NPGRealtimeBCI:
                 left_pct = sums['LEFT_HAND']['percent_to_trigger']
                 right_pct = sums['RIGHT_HAND']['percent_to_trigger']
                 feedback_info = f" | Integral: L={left_pct:3.0f}% R={right_pct:3.0f}%"
+
+        gap_info = ""
+        if decision_gap is not None:
+            gap_info = f" | Gap: {decision_gap:5.1%}"
         
         self.logger.info(
             f"{icon} {command:12} | "
-            f"Confidence: {confidence:5.1%} | "
+            f"Confidence: {confidence:5.1%}{gap_info} | "
             f"Processing: {proc_time*1000:5.1f}ms{feedback_info}"
         )
     
@@ -797,6 +815,12 @@ def main():
                        help='Smoothing window size for predictions (default: 8)')
     parser.add_argument('--overlap', type=float, default=0.5,
                        help='Window overlap ratio (0-1, default: 0.5)')
+    laplacian_group = parser.add_mutually_exclusive_group()
+    laplacian_group.add_argument('--laplacian', dest='laplacian', action='store_true',
+                                help='Enable Small Laplacian spatial filter: C3/C4 = C3/C4 - 0.5*Cz')
+    laplacian_group.add_argument('--no-laplacian', dest='laplacian', action='store_false',
+                                help='Disable Small Laplacian spatial filter (raw C3/Cz/C4)')
+    parser.set_defaults(laplacian=False)
     parser.add_argument('--smiley-feedback', action='store_true',
                        help='Use Smiley Feedback running integral (BCI Competition strategy)')
     parser.add_argument('--smiley-window', type=float, default=2.0,
@@ -895,6 +919,7 @@ def main():
             smoothing_window=args.smoothing,
             window_overlap=args.overlap,
             simulate=True,
+            apply_laplacian=args.laplacian,
             use_smiley_feedback=args.smiley_feedback,
             smiley_window_duration=args.smiley_window,
             smiley_threshold=args.smiley_threshold,
@@ -917,6 +942,7 @@ def main():
             smoothing_window=args.smoothing,
             window_overlap=args.overlap,
             simulate=False,
+            apply_laplacian=args.laplacian,
             use_smiley_feedback=args.smiley_feedback,
             smiley_window_duration=args.smiley_window,
             smiley_threshold=args.smiley_threshold,
@@ -941,6 +967,7 @@ def main():
             smoothing_window=args.smoothing,
             window_overlap=args.overlap,
             simulate=False,
+            apply_laplacian=args.laplacian,
             use_smiley_feedback=args.smiley_feedback,
             smiley_window_duration=args.smiley_window,
             smiley_threshold=args.smiley_threshold,
