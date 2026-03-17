@@ -282,7 +282,7 @@ class LeakyAccumulator:
         Update accumulator with new prediction.
         
         Args:
-            class_idx: Predicted class index
+            class_idx: Predicted class index (or 2 for NEUTRAL in 3-state mode)
             confidence: Prediction confidence (0-1)
         
         Returns:
@@ -297,7 +297,14 @@ class LeakyAccumulator:
         # Apply decay to all buckets (leak)
         self.buckets *= (1.0 - self.decay_rate)
         
-        # Check if prediction is in neutral zone
+        # Check if prediction is NEUTRAL (3-state mode)
+        if class_idx == 2:  # NEUTRAL state
+            # Don't add to any bucket, just let them decay
+            # This naturally handles the neutral zone
+            winning_bucket = np.max(self.buckets)
+            return -1, False, float(winning_bucket)
+        
+        # Check if prediction is in neutral zone (2-state mode)
         is_neutral = self.neutral_zone[0] <= confidence <= self.neutral_zone[1]
         
         # Add confidence to bucket if not neutral and above minimum
@@ -379,7 +386,8 @@ class NPGInferenceEngine:
                  use_smiley_feedback: bool = False,
                  smiley_window_duration: float = 2.0,
                  smiley_threshold: float = 3.5,
-                 smiley_prediction_rate: float = 2.2):
+                 smiley_prediction_rate: float = 2.2,
+                 neutral_threshold: float = None):
         """
         Initialize inference engine.
         
@@ -399,18 +407,22 @@ class NPGInferenceEngine:
             smiley_window_duration: Integration window in seconds (default: 2.0)
             smiley_threshold: Sum threshold to trigger (default: 3.5)
             smiley_prediction_rate: Expected prediction rate in Hz (default: 2.2)
+            neutral_threshold: Maximum confidence for NEUTRAL state (None = disabled)
+                               If max(confidences) < neutral_threshold, returns NEUTRAL
         """
         self.confidence_threshold = confidence_threshold
         self.smoothing_window = smoothing_window
         self.use_accumulator = use_accumulator
         self.use_calibration = use_calibration
         self.use_smiley_feedback = use_smiley_feedback
+        self.neutral_threshold = neutral_threshold
         
         # Setup logging FIRST (before anything that might log)
         self.logger = logging.getLogger(__name__)
         
-        # Class labels
+        # Class labels (2-class model + optional NEUTRAL state)
         self.class_names = ['LEFT_HAND', 'RIGHT_HAND']
+        self.class_names_3state = ['LEFT_HAND', 'RIGHT_HAND', 'NEUTRAL']
         
         # Load model
         if model_path is None:
@@ -584,7 +596,13 @@ class NPGInferenceEngine:
             
             class_idx = np.argmax(probabilities)
             confidence = float(probabilities[class_idx])
-            class_name = self.class_names[class_idx]
+            
+            # Check for NEUTRAL state if threshold is set
+            if self.neutral_threshold is not None and confidence < self.neutral_threshold:
+                class_name = 'NEUTRAL'
+                class_idx = 2  # Index for NEUTRAL in 3-state system
+            else:
+                class_name = self.class_names[class_idx]
             
             self.total_predictions += 1
             self.uncertainty_history.append(uncertainty)
@@ -692,6 +710,58 @@ class NPGInferenceEngine:
         """Clear baseline bias correction."""
         self.baseline_bias = None
         self.logger.info("Cleared baseline bias")
+    
+    def load_neutral_threshold(self, json_path: str) -> bool:
+        """
+        Load neutral threshold from JSON file.
+        
+        Args:
+            json_path: Path to neutral threshold JSON file
+        
+        Returns:
+            True if loaded successfully
+        """
+        try:
+            import json
+            with open(json_path, 'r') as f:
+                data = json.load(f)
+            
+            threshold = data.get('threshold')
+            if threshold is not None:
+                self.neutral_threshold = float(threshold)
+                self.logger.info(f"✅ Loaded neutral threshold: {self.neutral_threshold:.4f}")
+                self.logger.info(f"   3-state mode enabled: LEFT/RIGHT/NEUTRAL")
+                return True
+            else:
+                self.logger.error("No 'threshold' field in JSON file")
+                return False
+        except Exception as e:
+            self.logger.error(f"Failed to load neutral threshold: {e}")
+            return False
+    
+    def set_neutral_threshold(self, threshold: float):
+        """
+        Set neutral threshold manually.
+        
+        Args:
+            threshold: Maximum confidence for NEUTRAL state (0-1)
+        """
+        self.neutral_threshold = float(threshold)
+        self.logger.info(f"Set neutral threshold: {self.neutral_threshold:.4f}")
+        self.logger.info(f"3-state mode enabled: LEFT/RIGHT/NEUTRAL")
+    
+    def clear_neutral_threshold(self):
+        """Disable neutral state detection."""
+        self.neutral_threshold = None
+        self.logger.info("Cleared neutral threshold - 2-state mode (LEFT/RIGHT only)")
+    
+    def get_neutral_threshold(self) -> Optional[float]:
+        """Get current neutral threshold."""
+        return self.neutral_threshold
+    
+    def is_3state_mode(self) -> bool:
+        """Check if 3-state mode (with NEUTRAL) is enabled."""
+        return self.neutral_threshold is not None
     
     def predict_smoothed(self, preprocessed_data: np.ndarray) -> Tuple[int, float, str]:
         """

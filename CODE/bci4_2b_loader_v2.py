@@ -317,6 +317,98 @@ class BCI4_2B_Loader:
         else:
             raise ValueError(f"No data loaded for {subject_id}")
     
+    def load_personal_calibration(self, npz_path: str):
+        """
+        Load personal calibration data from NPZ file.
+        
+        This loads data collected via record_personal_calibration.py
+        and returns it in the same format as benchmark datasets.
+        
+        Args:
+            npz_path: Path to calibration NPZ file
+        
+        Returns:
+            epochs: (n_trials, n_channels, n_samples) - combined LEFT + RIGHT trials
+            labels: (n_trials,) - 0 for LEFT, 1 for RIGHT
+            rest_epochs: (n_rest, n_channels, n_samples) - REST trials (for threshold calibration)
+        """
+        self.logger.info(f"Loading personal calibration data: {npz_path}")
+        
+        # Load NPZ file
+        data = np.load(npz_path)
+        
+        # Extract epochs (shape: n_trials, 3, 1000)
+        epochs_left = data['epochs_left']
+        epochs_right = data['epochs_right']
+        epochs_rest = data['epochs_rest']
+        
+        # Create labels: 0 for LEFT, 1 for RIGHT
+        labels_left = np.zeros(len(epochs_left), dtype=np.int32)
+        labels_right = np.ones(len(epochs_right), dtype=np.int32)
+        
+        # Combine LEFT and RIGHT for training
+        epochs = np.concatenate([epochs_left, epochs_right], axis=0)
+        labels = np.concatenate([labels_left, labels_right], axis=0)
+        
+        self.logger.info(f"  LEFT trials:  {len(epochs_left)}")
+        self.logger.info(f"  RIGHT trials: {len(epochs_right)}")
+        self.logger.info(f"  REST trials:  {len(epochs_rest)}")
+        self.logger.info(f"  Total training: {len(epochs)} epochs")
+        self.logger.info(f"  Sampling rate: {data['sampling_rate']} Hz")
+        self.logger.info(f"  Channels: {data['channel_names']}")
+        
+        return epochs, labels, epochs_rest
+    
+    def load_mixed_data(self, 
+                       personal_npz: str,
+                       personal_weight: float = 0.7,
+                       benchmark_sessions: list = ['T']):
+        """
+        Load and mix personal calibration data with benchmark datasets.
+        
+        Useful for transfer learning with limited personal data.
+        
+        Args:
+            personal_npz: Path to personal calibration NPZ
+            personal_weight: Weight for personal data (0-1)
+            benchmark_sessions: Which benchmark sessions to include
+        
+        Returns:
+            epochs: Mixed epochs from personal + benchmark
+            labels: Corresponding labels
+        """
+        self.logger.info("Loading mixed personal + benchmark data")
+        
+        # Load personal data
+        personal_epochs, personal_labels, _ = self.load_personal_calibration(personal_npz)
+        
+        # Load benchmark data
+        benchmark_epochs, benchmark_labels = self.load_all_subjects(sessions=benchmark_sessions)
+        
+        # Calculate sampling ratios
+        n_personal = len(personal_epochs)
+        n_benchmark_target = int(n_personal * (1 - personal_weight) / personal_weight)
+        
+        # Sample from benchmark data
+        if n_benchmark_target < len(benchmark_epochs):
+            indices = np.random.choice(
+                len(benchmark_epochs),
+                size=n_benchmark_target,
+                replace=False
+            )
+            benchmark_epochs = benchmark_epochs[indices]
+            benchmark_labels = benchmark_labels[indices]
+        
+        # Combine
+        epochs = np.concatenate([personal_epochs, benchmark_epochs], axis=0)
+        labels = np.concatenate([personal_labels, benchmark_labels], axis=0)
+        
+        self.logger.info(f"  Personal data: {n_personal} epochs ({personal_weight*100:.0f}%)")
+        self.logger.info(f"  Benchmark data: {len(benchmark_epochs)} epochs ({(1-personal_weight)*100:.0f}%)")
+        self.logger.info(f"  Total: {len(epochs)} epochs")
+        
+        return epochs, labels
+    
     def load_all_subjects(self, sessions: list = None):
         """
         Load all subjects.
