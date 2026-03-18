@@ -1,0 +1,14 @@
+{
+  "personalized_models": {
+    "alan": {
+      "model_path": "C:\\programs\\BCI_IOT_PARALYSED\\CODE\\models\\personalized\\alan_finetuned.keras",
+      "threshold": 0.509586751461029,
+      "metadata": {
+        "timestamp": "2026-03-18T03:36:25.985296",
+        "val_accuracy": 0.5249999761581421,
+        "fine_tuning_strategy": "full",
+        "calibration_file": "alan_calibration_20260318_030538.npz"
+      }
+    }
+  }
+}

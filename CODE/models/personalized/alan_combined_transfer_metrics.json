@@ -1,0 +1,65 @@
+{
+  "timestamp": "2026-03-18T03:50:46.368006",
+  "dataset_file": "C:\\programs\\BCI_IOT_PARALYSED\\CODE\\datasets\\combined_bci2b_personal_alan.npz",
+  "user_id": "alan",
+  "base_model": "C:\\programs\\BCI_IOT_PARALYSED\\CODE\\models\\best\\eegnet_2class_bci2b.keras",
+  "strategy": "last-block",
+  "trainable_parameters": 3586,
+  "train_size": 278,
+  "val_size": 60,
+  "test_size": 60,
+  "epochs_ran": 22,
+  "best_val_accuracy": 0.4833333194255829,
+  "test_accuracy": 0.4833333194255829,
+  "test_loss": 0.7185140252113342,
+  "test_weighted_f1": 0.44888888888888895,
+  "confusion_matrix": [
+    [
+      22,
+      8
+    ],
+    [
+      23,
+      7
+    ]
+  ],
+  "classification_report": {
+    "LEFT": {
+      "precision": 0.4888888888888889,
+      "recall": 0.7333333333333333,
+      "f1-score": 0.5866666666666667,
+      "support": 30.0
+    },
+    "RIGHT": {
+      "precision": 0.4666666666666667,
+      "recall": 0.23333333333333334,
+      "f1-score": 0.3111111111111111,
+      "support": 30.0
+    },
+    "accuracy": 0.48333333333333334,
+    "macro avg": {
+      "precision": 0.47777777777777775,
+      "recall": 0.4833333333333333,
+      "f1-score": 0.4488888888888889,
+      "support": 60.0
+    },
+    "weighted avg": {
+      "precision": 0.47777777777777775,
+      "recall": 0.48333333333333334,
+      "f1-score": 0.44888888888888895,
+      "support": 60.0
+    }
+  },
+  "model_path": "C:\\programs\\BCI_IOT_PARALYSED\\CODE\\models\\personalized\\alan_combined_transfer.keras",
+  "best_checkpoint": "C:\\programs\\BCI_IOT_PARALYSED\\CODE\\models\\personalized\\alan_combined_transfer_best_20260318_035039.keras",
+  "scaler_path": "C:\\programs\\BCI_IOT_PARALYSED\\CODE\\models\\personalized\\alan_combined_transfer_scaler.json",
+  "threshold_path": "C:\\programs\\BCI_IOT_PARALYSED\\CODE\\models\\personalized\\alan_combined_transfer_neutral_threshold.json",
+  "threshold_info": {
+    "threshold": 0.5904285907745361,
+    "mean": 0.560563862323761,
+    "median": 0.5323355793952942,
+    "std": 0.06555519998073578,
+    "p90": 0.6509862542152405,
+    "n_rest_trials": 50
+  }
+}

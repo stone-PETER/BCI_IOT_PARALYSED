@@ -70,8 +70,8 @@ class ThreeStateValidator:
         )
         self.logger = logging.getLogger(__name__)
         
-        # Load model info from registry
-        self.model_info = ModelFactory.load_from_registry(user_id)
+        # Load model info (registry method if available, otherwise fallback files)
+        self.model_info = self._load_model_info(user_id)
         
         # Initialize components
         self.adapter = None
@@ -89,6 +89,42 @@ class ThreeStateValidator:
         self.state_labels = ['LEFT', 'RIGHT', 'NEUTRAL']
         
         self.logger.info(f"3-State Validator initialized for user: {user_id}")
+
+    def _load_model_info(self, user_id: str) -> Dict:
+        """Load personalized model path + threshold from registry/fallback files."""
+        if hasattr(ModelFactory, 'load_from_registry'):
+            try:
+                info = ModelFactory.load_from_registry(user_id)
+                # Normalize key naming if needed
+                if isinstance(info, dict) and 'path' not in info and 'model_path' in info:
+                    info['path'] = info['model_path']
+                return info
+            except Exception as e:
+                self.logger.warning(f"Registry loader failed, using fallback files: {e}")
+
+        base_dir = Path(__file__).parent / "models" / "personalized"
+        model_path = base_dir / f"{user_id}_finetuned.keras"
+        threshold_path = base_dir / f"{user_id}_neutral_threshold.json"
+
+        if not model_path.exists():
+            raise FileNotFoundError(
+                f"Personalized model not found: {model_path}. "
+                f"Run fine_tune_personal_model.py first."
+            )
+
+        neutral_threshold = 0.70  # sensible default
+        if threshold_path.exists():
+            try:
+                with open(threshold_path, 'r') as f:
+                    threshold_data = json.load(f)
+                neutral_threshold = float(threshold_data.get('threshold', neutral_threshold))
+            except (json.JSONDecodeError, ValueError, OSError) as e:
+                self.logger.warning(f"Could not read threshold file, using default {neutral_threshold:.2f}: {e}")
+
+        return {
+            'path': str(model_path),
+            'neutral_threshold': neutral_threshold
+        }
     
     def setup(self) -> bool:
         """Setup hardware and inference engine."""
@@ -111,13 +147,14 @@ class ThreeStateValidator:
         self.preprocessor = NPGPreprocessor(
             input_rate=500,
             output_rate=250,
-            apply_bandpass=True,
-            bandpass_low=8.0,
-            bandpass_high=30.0,
+            filter_low=8.0,
+            filter_high=30.0,
             apply_notch=True,
             notch_freq=50.0,
             use_car=False,
-            apply_zscore=True
+            apply_bandpass=False,
+            apply_zscore=False,
+            realtime_mode=True
         )
         
         # Initialize inference engine with personalized model
@@ -230,6 +267,7 @@ class ThreeStateValidator:
                 elif predicted_state == 'RIGHT':
                     predicted_state = 'RIGHT_HAND'
         else:
+            vote_counts = Counter()
             predicted_state = 'UNKNOWN'
         
         # Convert to simple labels

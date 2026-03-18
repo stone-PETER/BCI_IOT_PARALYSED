@@ -1,0 +1,64 @@
+{
+  "timestamp": "2026-03-18T07:34:00.275662",
+  "dataset_file": "C:\\programs\\BCI_IOT_PARALYSED\\CODE\\datasets\\combined_bci2b_personal_alan.npz",
+  "user_id": "alan",
+  "augmentation_factor": 5,
+  "personal_weight": 0.8,
+  "train_size": 835,
+  "val_size": 179,
+  "test_size": 180,
+  "epochs_ran": 33,
+  "best_val_accuracy": 0.5530726313591003,
+  "test_accuracy": 0.5055555701255798,
+  "test_loss": 0.6928028464317322,
+  "test_weighted_f1": 0.42365893176326347,
+  "confusion_matrix": [
+    [
+      12,
+      79
+    ],
+    [
+      10,
+      79
+    ]
+  ],
+  "classification_report": {
+    "LEFT": {
+      "precision": 0.5454545454545454,
+      "recall": 0.13186813186813187,
+      "f1-score": 0.21238938053097345,
+      "support": 91.0
+    },
+    "RIGHT": {
+      "precision": 0.5,
+      "recall": 0.8876404494382022,
+      "f1-score": 0.6396761133603239,
+      "support": 89.0
+    },
+    "accuracy": 0.5055555555555555,
+    "macro avg": {
+      "precision": 0.5227272727272727,
+      "recall": 0.509754290653167,
+      "f1-score": 0.4260327469456487,
+      "support": 180.0
+    },
+    "weighted avg": {
+      "precision": 0.5229797979797979,
+      "recall": 0.5055555555555555,
+      "f1-score": 0.42365893176326347,
+      "support": 180.0
+    }
+  },
+  "model_path": "C:\\programs\\BCI_IOT_PARALYSED\\CODE\\models\\personalized\\alan_combined_scratch.keras",
+  "best_checkpoint": "C:\\programs\\BCI_IOT_PARALYSED\\CODE\\models\\personalized\\alan_combined_scratch_best_20260318_073312.keras",
+  "scaler_path": "C:\\programs\\BCI_IOT_PARALYSED\\CODE\\models\\personalized\\alan_combined_scaler.json",
+  "threshold_path": "C:\\programs\\BCI_IOT_PARALYSED\\CODE\\models\\personalized\\alan_combined_neutral_threshold.json",
+  "threshold_info": {
+    "threshold": 0.5213757455348969,
+    "mean": 0.5171108841896057,
+    "median": 0.5180190205574036,
+    "std": 0.00923958607017994,
+    "p90": 0.5288823187351227,
+    "n_rest_trials": 50
+  }
+}

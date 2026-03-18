@@ -1,0 +1,26 @@
+{
+  "user_id": "alan",
+  "timestamp": "2026-03-18T03:36:25.985296",
+  "calibration_file": "c:\\programs\\BCI_IOT_PARALYSED\\code\\calibration_data\\alan_calibration_20260318_030538.npz",
+  "base_model": "C:\\programs\\BCI_IOT_PARALYSED\\CODE\\models\\best\\eegnet_2class_bci2b.keras",
+  "fine_tuning_strategy": "full",
+  "mixed_with_benchmark": false,
+  "personal_weight": 1.0,
+  "learning_rate": 0.0001,
+  "max_epochs": 50,
+  "best_epoch": 2,
+  "best_val_accuracy": 0.5249999761581421,
+  "best_train_accuracy": 0.5220125913619995,
+  "trainable_parameters": 5826,
+  "neutral_threshold": {
+    "threshold": 0.509586751461029,
+    "mean": 0.5067145824432373,
+    "median": 0.5058400630950928,
+    "std": 0.004320574924349785,
+    "p75": 0.509586751461029,
+    "p90": 0.513555109500885,
+    "recommended_min": 0.4595867395401001,
+    "recommended_max": 0.559586763381958,
+    "n_rest_trials": 50
+  }
+}

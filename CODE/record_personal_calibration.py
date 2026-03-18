@@ -47,20 +47,11 @@ EPOCH_SAMPLES = int(TRIAL_DURATION * OUTPUT_SAMPLING_RATE)  # 1000 samples @ 250
 
 
 class CalibrationRecorder:
-    """Records personal calibration data with guided visual cues."""
+    """Records personal calibration data for model fine-tuning."""
     
-    def __init__(self, 
-                 user_id: str,
-                 simulate: bool = False,
-                 save_dir: str = "calibration_data"):
-        """
-        Initialize calibration recorder.
+    def __init__(self, user_id: str, simulate: bool = False, save_dir: str = "calibration_data"):
+        """Initialize calibration recorder."""
         
-        Args:
-            user_id: Unique identifier for user
-            simulate: Use simulator instead of real device
-            save_dir: Directory to save calibration data
-        """
         self.user_id = user_id
         self.simulate = simulate
         self.save_dir = Path(__file__).parent / save_dir
@@ -73,7 +64,7 @@ class CalibrationRecorder:
         )
         self.logger = logging.getLogger(__name__)
         
-        # Initialize components
+        # Initialize NPG adapter
         if simulate:
             self.adapter = NPGLiteSimulator()
             self.logger.info("Using NPG Lite SIMULATOR")
@@ -81,16 +72,18 @@ class CalibrationRecorder:
             self.adapter = NPGLiteAdapter()
             self.logger.info("Using real NPG Lite device")
         
+        # Initialize preprocessor with correct parameters (matching training config)
         self.preprocessor = NPGPreprocessor(
             input_rate=SAMPLING_RATE,
             output_rate=OUTPUT_SAMPLING_RATE,
-            apply_bandpass=True,
-            bandpass_low=8.0,
-            bandpass_high=30.0,
+            filter_low=8.0,
+            filter_high=30.0,
             apply_notch=True,
             notch_freq=50.0,
-            use_car=False,  # Use Small Laplacian for 3 channels
-            apply_zscore=True
+            apply_bandpass=False,  # Model trained on raw data
+            apply_zscore=False,     # Model trained on raw data
+            use_car=False,          # 3 channels only
+            realtime_mode=False
         )
         
         # Data storage

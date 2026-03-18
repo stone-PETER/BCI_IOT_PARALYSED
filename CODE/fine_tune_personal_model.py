@@ -41,6 +41,7 @@ from sklearn.model_selection import train_test_split
 sys.path.insert(0, str(Path(__file__).parent))
 
 from bci4_2b_loader_v2 import BCI4_2B_Loader
+from eegnet_model import EEGNet
 
 
 # Fine-tuning parameters
@@ -58,7 +59,8 @@ class PersonalModelFineTuner:
                  base_model_path: str = "models/best/eegnet_2class_bci2b.keras",
                  strategy: str = "last-block",
                  mix_benchmark: bool = False,
-                 personal_weight: float = 0.7):
+                 personal_weight: float = 0.7,
+                 from_scratch: bool = False):
         """
         Initialize fine-tuner.
         
@@ -68,12 +70,17 @@ class PersonalModelFineTuner:
             strategy: Freezing strategy ('head-only', 'last-block', 'full')
             mix_benchmark: Whether to mix personal data with benchmark data
             personal_weight: Weight for personal data when mixing (0-1)
+            from_scratch: Build and train a fresh EEGNet model (no pretrained weights)
         """
         self.calibration_file = Path(calibration_file)
         self.base_model_path = Path(__file__).parent / base_model_path
         self.strategy = strategy
         self.mix_benchmark = mix_benchmark
         self.personal_weight = personal_weight
+        self.from_scratch = from_scratch
+
+        if self.from_scratch and self.strategy != "full":
+            self.strategy = "full"
         
         # Setup logging
         logging.basicConfig(
@@ -91,11 +98,27 @@ class PersonalModelFineTuner:
         
         self.logger.info(f"Personal Model Fine-Tuner initialized")
         self.logger.info(f"  User ID: {self.user_id}")
-        self.logger.info(f"  Strategy: {strategy}")
-        self.logger.info(f"  Base model: {self.base_model_path}")
+        self.logger.info(f"  Strategy: {self.strategy}")
+        if self.from_scratch and strategy != "full":
+            self.logger.info("  Note: strategy overridden to 'full' for from-scratch training")
+        if self.from_scratch:
+            self.logger.info("  Model mode: from scratch (no pretrained weights)")
+        else:
+            self.logger.info(f"  Base model: {self.base_model_path}")
     
     def load_base_model(self) -> keras.Model:
         """Load pretrained base model."""
+        if self.from_scratch:
+            self.logger.info("Building fresh EEGNet model from config_2b.yaml...")
+            eegnet = EEGNet(config_path="config_2b.yaml")
+            model = eegnet.build_model()
+            self.logger.info(f"✅ Built fresh model with {model.count_params():,} parameters")
+            self.logger.info(f"   Layers: {len(model.layers)}")
+            self.logger.info("   Layer structure:")
+            for idx, layer in enumerate(model.layers):
+                self.logger.info(f"     [{idx:2d}] {layer.name:30s} {layer.__class__.__name__}")
+            return model
+
         self.logger.info("Loading pretrained base model...")
         
         if not self.base_model_path.exists():
@@ -200,6 +223,31 @@ class PersonalModelFineTuner:
         self.logger.info(f"   REST: {len(rest_epochs)} epochs")
         
         return X, y, rest_epochs
+
+    def _to_model_input(self, X: np.ndarray) -> np.ndarray:
+        """
+        Convert epochs to EEGNet input layout: (trials, channels, samples, 1).
+
+        Supports both common epoch layouts:
+        - (trials, samples, channels)
+        - (trials, channels, samples)
+        """
+        if X.ndim != 3:
+            raise ValueError(f"Expected 3D epochs array, got shape={X.shape}")
+
+        if X.shape[1] == 3:
+            # (trials, channels, samples) -> already channel-first
+            X_model = X
+        elif X.shape[2] == 3:
+            # (trials, samples, channels) -> transpose to channel-first
+            X_model = X.transpose(0, 2, 1)
+        else:
+            raise ValueError(
+                f"Cannot infer channel axis from shape={X.shape}. "
+                "Expected either (n, 3, samples) or (n, samples, 3)."
+            )
+
+        return X_model[..., np.newaxis]
     
     def prepare_data(self, X: np.ndarray, y: np.ndarray) -> Tuple:
         """
@@ -213,7 +261,9 @@ class PersonalModelFineTuner:
             X_train, X_val, y_train, y_val
         """
         # Reshape for model: (trials, channels, samples, 1)
-        X = X[..., np.newaxis]
+        X = self._to_model_input(X)
+
+        self.logger.info(f"Input reshaped for model: {X.shape}")
         
         # One-hot encode labels
         y_onehot = tf.keras.utils.to_categorical(y, num_classes=2)
@@ -313,7 +363,7 @@ class PersonalModelFineTuner:
         self.logger.info("Calibrating neutral threshold from REST trials...")
         
         # Prepare REST data for model
-        X_rest = rest_epochs[..., np.newaxis]  # Add channel dimension
+        X_rest = self._to_model_input(rest_epochs)
         
         # Get predictions
         predictions = model.predict(X_rest, verbose=0)
@@ -401,20 +451,48 @@ class PersonalModelFineTuner:
             json.dump(metadata, f, indent=2)
         self.logger.info(f"💾 Saved metadata: {metadata_path}")
         
-        # Register in model registry
-        from model_factory import ModelFactory
-        ModelFactory.register_personalized_model(
-            user_id=self.user_id,
-            model_path=str(model_path),
-            threshold=threshold_info['threshold'],
-            metadata={
-                'timestamp': metadata['timestamp'],
-                'val_accuracy': metadata['best_val_accuracy'],
-                'fine_tuning_strategy': self.strategy,
-                'calibration_file': str(self.calibration_file.name)
-            }
-        )
-        self.logger.info(f"📝 Registered in model registry")
+        # Register in model registry (best effort)
+        registry_metadata = {
+            'timestamp': metadata['timestamp'],
+            'val_accuracy': metadata['best_val_accuracy'],
+            'fine_tuning_strategy': self.strategy,
+            'calibration_file': str(self.calibration_file.name)
+        }
+
+        try:
+            from model_factory import ModelFactory
+            if hasattr(ModelFactory, 'register_personalized_model'):
+                ModelFactory.register_personalized_model(
+                    user_id=self.user_id,
+                    model_path=str(model_path),
+                    threshold=threshold_info['threshold'],
+                    metadata=registry_metadata
+                )
+                self.logger.info(f"📝 Registered in model registry")
+            else:
+                registry_path = Path(__file__).parent / "model_registry.json"
+                try:
+                    with open(registry_path, 'r') as f:
+                        registry = json.load(f)
+                except (FileNotFoundError, json.JSONDecodeError):
+                    registry = {}
+
+                if not isinstance(registry, dict):
+                    registry = {}
+
+                personalized = registry.get('personalized_models', {})
+                personalized[self.user_id] = {
+                    'model_path': str(model_path),
+                    'threshold': threshold_info['threshold'],
+                    'metadata': registry_metadata
+                }
+                registry['personalized_models'] = personalized
+
+                with open(registry_path, 'w') as f:
+                    json.dump(registry, f, indent=2)
+                self.logger.info(f"📝 Registered in fallback registry: {registry_path}")
+        except Exception as registry_error:
+            self.logger.warning(f"⚠️ Registry update skipped: {registry_error}")
         
         return model_path, threshold_path, metadata_path
     
@@ -512,6 +590,11 @@ def main():
         default=0.7,
         help='Weight for personal data when mixing (0-1, default: 0.7)'
     )
+    parser.add_argument(
+        '--from-scratch',
+        action='store_true',
+        help='Train a fresh EEGNet model from scratch (no pretrained weights)'
+    )
     
     args = parser.parse_args()
     
@@ -526,7 +609,8 @@ def main():
         base_model_path=args.base_model,
         strategy=args.strategy,
         mix_benchmark=args.mix_benchmark,
-        personal_weight=args.personal_weight
+        personal_weight=args.personal_weight,
+        from_scratch=args.from_scratch
     )
     
     # Run fine-tuning
