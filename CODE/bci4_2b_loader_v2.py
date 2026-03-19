@@ -321,8 +321,9 @@ class BCI4_2B_Loader:
         """
         Load personal calibration data from NPZ file.
         
-        This loads data collected via record_personal_calibration.py
-        and returns it in the same format as benchmark datasets.
+        Supports two formats:
+        1. Original NPG format: epochs_left, epochs_right, epochs_rest (from record_personal_calibration.py)
+        2. Preprocessed format: X, y (from preprocess_calibration_for_training.py)
         
         Args:
             npz_path: Path to calibration NPZ file
@@ -336,28 +337,56 @@ class BCI4_2B_Loader:
         
         # Load NPZ file
         data = np.load(npz_path)
+        keys = list(data.keys())
         
-        # Extract epochs (shape: n_trials, 3, 1000)
-        epochs_left = data['epochs_left']
-        epochs_right = data['epochs_right']
-        epochs_rest = data['epochs_rest']
+        # Detect format
+        if 'X' in keys and 'y' in keys:
+            # Preprocessed format (from preprocess_calibration_for_training.py)
+            self.logger.info("  Format: Preprocessed (X, y)")
+            epochs = data['X']
+            labels = data['y']
+            rest_epochs = np.array([])  # No REST trials in preprocessed format
+            
+            self.logger.info(f"  Total training: {len(epochs)} epochs")
+            self.logger.info(f"  LEFT trials (0):  {np.sum(labels == 0)}")
+            self.logger.info(f"  RIGHT trials (1): {np.sum(labels == 1)}")
+            self.logger.info(f"  REST trials: {len(rest_epochs)} (not available in preprocessed data)")
         
-        # Create labels: 0 for LEFT, 1 for RIGHT
-        labels_left = np.zeros(len(epochs_left), dtype=np.int32)
-        labels_right = np.ones(len(epochs_right), dtype=np.int32)
+        elif 'epochs_left' in keys and 'epochs_right' in keys:
+            # Original NPG format (from record_personal_calibration.py)
+            self.logger.info("  Format: Original NPG (epochs_left, epochs_right, epochs_rest)")
+            
+            epochs_left = data['epochs_left']
+            epochs_right = data['epochs_right']
+            epochs_rest = data['epochs_rest']
+            
+            # Create labels: 0 for LEFT, 1 for RIGHT
+            labels_left = np.zeros(len(epochs_left), dtype=np.int32)
+            labels_right = np.ones(len(epochs_right), dtype=np.int32)
+            
+            # Combine LEFT and RIGHT for training
+            epochs = np.concatenate([epochs_left, epochs_right], axis=0)
+            labels = np.concatenate([labels_left, labels_right], axis=0)
+            rest_epochs = epochs_rest
+            
+            self.logger.info(f"  LEFT trials:  {len(epochs_left)}")
+            self.logger.info(f"  RIGHT trials: {len(epochs_right)}")
+            self.logger.info(f"  REST trials:  {len(epochs_rest)}")
+            self.logger.info(f"  Total training: {len(epochs)} epochs")
+            
+            if 'sampling_rate' in data and 'channel_names' in data:
+                self.logger.info(f"  Sampling rate: {data['sampling_rate']} Hz")
+                self.logger.info(f"  Channels: {data['channel_names']}")
         
-        # Combine LEFT and RIGHT for training
-        epochs = np.concatenate([epochs_left, epochs_right], axis=0)
-        labels = np.concatenate([labels_left, labels_right], axis=0)
+        else:
+            raise ValueError(
+                f"Unknown NPZ format. Expected either:\n"
+                f"  - Preprocessed: X, y (from preprocess_calibration_for_training.py)\n"
+                f"  - Original: epochs_left, epochs_right, epochs_rest (from record_personal_calibration.py)\n"
+                f"Found keys: {keys}"
+            )
         
-        self.logger.info(f"  LEFT trials:  {len(epochs_left)}")
-        self.logger.info(f"  RIGHT trials: {len(epochs_right)}")
-        self.logger.info(f"  REST trials:  {len(epochs_rest)}")
-        self.logger.info(f"  Total training: {len(epochs)} epochs")
-        self.logger.info(f"  Sampling rate: {data['sampling_rate']} Hz")
-        self.logger.info(f"  Channels: {data['channel_names']}")
-        
-        return epochs, labels, epochs_rest
+        return epochs, labels, rest_epochs
     
     def load_mixed_data(self, 
                        personal_npz: str,

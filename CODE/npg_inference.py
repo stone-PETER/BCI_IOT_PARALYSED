@@ -283,7 +283,7 @@ class NPGInferenceEngine:
         # Load model
         #model path main
         if model_path is None:
-            model_path = Path(__file__).parent / 'models' / 'personalized' / 'alan_combined_scratch_best_20260318_073312.keras'     #'best_eegnet_2class_bci2b.keras'
+            model_path = Path(__file__).parent / 'models' / 'best' / 'best_eegnet_2class_bci2b.keras'
         
         self.model_path = Path(model_path)
         self.model = None

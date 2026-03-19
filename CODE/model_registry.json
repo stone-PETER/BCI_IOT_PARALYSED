@@ -1,13 +1,13 @@
 {
   "personalized_models": {
     "alan": {
-      "model_path": "C:\\programs\\BCI_IOT_PARALYSED\\CODE\\models\\personalized\\alan_finetuned.keras",
-      "threshold": 0.509586751461029,
+      "model_path": "C:\\programs\\BCI_IOT_PARALYSED\\code\\models\\personalized\\alan_finetuned.keras",
+      "threshold": 0.7,
       "metadata": {
-        "timestamp": "2026-03-18T03:36:25.985296",
-        "val_accuracy": 0.5249999761581421,
+        "timestamp": "2026-03-18T11:24:31.024709",
+        "val_accuracy": 0.800000011920929,
         "fine_tuning_strategy": "full",
-        "calibration_file": "alan_calibration_20260318_030538.npz"
+        "calibration_file": "alan_calibration_20260318_105119_preprocessed.npz"
       }
     }
   }

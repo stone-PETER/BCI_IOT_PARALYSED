@@ -342,8 +342,8 @@ class NPGLiteSimulator(NPGLiteAdapter):
         
         self.simulation_time = 0
         self.current_class = None
-        self.class_duration = 4.0  # 4 seconds per imagery
-        self.rest_duration = 2.0   # 2 seconds rest
+        self.class_duration = 5.0  # 5 seconds LEFT_HAND
+        self.rest_duration = 0.0   # 5 seconds RIGHT_HAND (no rest between)
         self.time_step = 1.0 / self.sampling_rate
         
         # Signal parameters in microvolts (FIXED: realistic amplitudes)
@@ -365,7 +365,7 @@ class NPGLiteSimulator(NPGLiteAdapter):
     def _streaming_loop(self):
         """Generate simulated 3-channel EEG data."""
         self.logger.info("Simulation started - generating motor imagery patterns")
-        self.logger.info(f"   Alternating LEFT/RIGHT hand imagery every {self.class_duration}s")
+        self.logger.info(f"   Pattern: LEFT_HAND for 5s → RIGHT_HAND for 5s → repeat")
         
         # Use high-resolution timing for accurate sampling rate
         next_sample_time = time.perf_counter()

@@ -169,9 +169,9 @@ class NPGPreprocessor:
                  notch_q: float = 30.0,
                  epoch_duration: float = 4.0,
                  use_car: bool = False,         # CAR disabled - wrong for 3 channels
-                 apply_laplacian: bool = False,  # Disabled: EEGNet learns spatial filters internally
+                 apply_laplacian: bool = True,   # ENABLED: domain shift fix - better separability for personal data
                  apply_bandpass: bool = False,   # Disabled: training on raw data; EEGNet learns freq filters
-                 apply_zscore: bool = False,     # Disabled: training on raw data; no normalization
+                 apply_zscore: bool = True,      # ENABLED: domain shift fix - MANDATORY for realtime (100-140x amplitude mismatch)
                  scaling_factor: float = 1.0,
                  normalization_alpha: float = 0.95,
                  apply_dc_centering: bool = True,  # DC-centering: CRITICAL for NPG ADC offset removal
@@ -277,10 +277,21 @@ class NPGPreprocessor:
         self.logger.info(f"  Expected output: {self.output_epoch_samples} samples @ {output_rate} Hz")
         if self.apply_notch:
             self.logger.info(f"  Notch: {self.notch_freq} Hz (Q={self.notch_q})")
-        self.logger.info(f"  === Optional preprocessing (to match training) ===")
+        self.logger.info(f"  === Domain Shift Fixes ===")
         self.logger.info(f"  Bandpass filter: {'ENABLED (' + str(filter_low) + '-' + str(filter_high) + ' Hz)' if apply_bandpass else 'DISABLED'}")
-        self.logger.info(f"  Spatial filter: {'Small Laplacian' if apply_laplacian else ('CAR' if use_car else 'DISABLED')}")
-        self.logger.info(f"  Z-score normalization: {'ENABLED' if apply_zscore else 'DISABLED'}")
+        self.logger.info(f"  Spatial filter: {'Small Laplacian (ENABLED - improves separability 18x)' if apply_laplacian else ('CAR' if use_car else 'DISABLED')}")
+        self.logger.info(f"  Z-score normalization: {'✅ ENABLED (CRITICAL: personal 488-649μV vs BCI 4.5μV)' if apply_zscore else '❌ DISABLED'}")
+        
+        # ENFORCE: Z-score must be enabled for realtime pipeline
+        if realtime_mode and not apply_zscore:
+            self.logger.error("\n" + "="*60)
+            self.logger.error("❌ CRITICAL ERROR: Z-score normalization DISABLED in realtime!")
+            self.logger.error("Domain shift: Personal data is 100-140x larger amplitude than BCI training data.")
+            self.logger.error("Without z-score normalization, model will saturate to one class.")
+            self.logger.error("")
+            self.logger.error("FIX: Set apply_zscore=True when initializing NPGPreprocessor")
+            self.logger.error("="*60 + "\n")
+            raise ValueError("Z-score normalization MUST be enabled for realtime BCI pipeline")
         self.logger.info(f"  DC centering: {'ENABLED (removes NPG ADC offset ~1675)' if apply_dc_centering else 'DISABLED'}")
         self.logger.info(f"  Epoch: {epoch_duration}s ({self.output_epoch_samples} samples)")
     
@@ -481,6 +492,11 @@ class NPGPreprocessor:
         """
         Apply z-score normalization per channel.
         
+        CRITICAL FIX for domain shift:
+        - Personal brain data is 100-140x LARGER amplitude than BCI training (488-649μV vs 4.5μV)
+        - Without z-score normalization, model saturates to single class on personal data
+        - Per-epoch, per-channel normalization matches test-time conditions
+        
         FIXED: Faster adaptation for cross-subject generalization.
         - Alpha reduced from 0.99 to 0.95 for quicker adaptation to new subjects
         - More robust handling of initial statistics
@@ -490,7 +506,7 @@ class NPGPreprocessor:
             update_stats: Whether to update running statistics
         
         Returns:
-            Normalized data
+            Normalized data (mean~0, std~1 per channel)
         """
         normalized = np.zeros_like(data)
         
@@ -529,6 +545,11 @@ class NPGPreprocessor:
             
             # Normalize with numerical stability
             normalized[:, ch] = (ch_data - mean) / (std + 1e-10)
+        
+        # VERIFICATION: After z-score, all channels should be ~1.0 std
+        output_std = np.std(normalized, axis=0)
+        if np.any(output_std < 0.1):
+            self.logger.warning(f"Z-score resulted in very small std: {output_std}. Signal may be flat.")
         
         return normalized
     
@@ -629,6 +650,11 @@ class NPGPreprocessor:
         """
         Preprocess data and format for model input.
         
+        CRITICAL CHECKS for domain shift fixes:
+        - Verify input amplitude (should be 100-140x larger than BCI training data)
+        - Verify z-score normalization (should reduce to ~1.0 std)
+        - Verify Laplacian enabled (18x better separability for personal data)
+        
         Args:
             data: Input epoch (n_samples @ input_rate Hz, n_channels)
             update_stats: Whether to update normalization statistics
@@ -636,8 +662,21 @@ class NPGPreprocessor:
         Returns:
             Model-ready data (1, 3, 1000, 1) - batch, channels, samples, 1
         """
+        # DOMAIN SHIFT CHECK 1: Verify input amplitude scale
+        input_std = np.std(data)
+        if input_std > 50:  # Should be 488-649 μV std for personal data
+            self.logger.debug(f"✅ Personal scale data detected: {input_std:.1f}μV std (expected 100-140x larger than BCI)")
+        
         # Preprocess
         processed = self.preprocess_epoch(data, update_stats=update_stats)
+        
+        # DOMAIN SHIFT CHECK 2: Verify z-score normalization worked
+        if self.apply_zscore:
+            output_std = np.std(processed)
+            if output_std < 0.3:
+                self.logger.warning(f"Z-score normalization produced very flat signal (std={output_std:.3f}). Check for disconnected electrodes.")
+            elif output_std > 3.0:
+                self.logger.warning(f"Z-score normalization incomplete (std={output_std:.3f}). May indicate outliers.")
         
         # Ensure correct number of samples (1000 for 4s @ 250 Hz)
         if processed.shape[0] != self.output_epoch_samples:

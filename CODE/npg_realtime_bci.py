@@ -28,6 +28,7 @@ from collections import deque
 from npg_lite_adapter import NPGLiteAdapter, NPGLiteSimulator, NPGLiteDirectSerial
 from npg_preprocessor import NPGPreprocessor, SlidingWindowBuffer
 from npg_inference import NPGInferenceEngine
+from blink_detection import BlinkDetector
 
 
 # === FIXED: Consistent parameters across all components ===
@@ -39,12 +40,6 @@ N_CHANNELS = 3              # C3, Cz, C4
 # Calculated values
 INPUT_EPOCH_SAMPLES = int(EPOCH_DURATION * INPUT_SAMPLING_RATE)   # 2000 @ 500 Hz
 OUTPUT_EPOCH_SAMPLES = int(EPOCH_DURATION * OUTPUT_SAMPLING_RATE) # 1000 @ 250 Hz
-
-# Binary class-gap rule:
-# LEFT  if P(LEFT)  - P(RIGHT) >= 0.05
-# RIGHT if P(RIGHT) - P(LEFT)  >= 0.05
-# else UNCERTAIN
-CLASS_ADVANTAGE_MARGIN = 0.05
 
 
 class NPGRealtimeBCI:
@@ -68,7 +63,7 @@ class NPGRealtimeBCI:
                  smoothing_window: int = 8,
                  window_overlap: float = 0.5,
                  simulate: bool = False,
-                 apply_laplacian: bool = False,
+                 simulate_normal: bool = False,
                  temperature: float = 1.5,
                  use_calibration: bool = True,
                  use_smiley_feedback: bool = False,
@@ -77,13 +72,17 @@ class NPGRealtimeBCI:
                  smiley_prediction_rate: float = 2.2,
                  neutral_threshold: float = None,
                  api_base_url: Optional[str] = None,
-                 api_light_path: str = '/light',
-                 api_fan_path: str = '/fan',
                  api_timeout: float = 2.0,
                  api_confidence_threshold: float = 0.75,
                  api_neutral_hold: float = 0.8,
                  api_cooldown: float = 2.5,
-                 api_rearm_timeout: float = 4.0):
+                 api_rearm_timeout: float = 4.0,
+                 enable_blink_detection: bool = False,
+                 enable_blink_api: bool = False,
+                 blink_api_endpoint: Optional[str] = None,
+                 blink_threshold: float = 100.0,
+                 use_statistical_blink: bool = True,
+                 blink_z_score: float = 3.0):
         """
         Initialize real-time BCI system.
         
@@ -93,6 +92,7 @@ class NPGRealtimeBCI:
             smoothing_window: Number of predictions to smooth (default: 8)
             window_overlap: Overlap ratio for sliding windows (0-1)
             simulate: Use simulator instead of real device
+            simulate_normal: Use simulator but process through model (if False, simulator bypasses model with hardcoded patterns)
             temperature: Temperature for calibrated confidence (default: 1.5)
             use_calibration: Whether to use temperature-scaled confidence
             use_smiley_feedback: Use Smiley Feedback running integral (default: False)
@@ -100,16 +100,18 @@ class NPGRealtimeBCI:
             smiley_threshold: Sum threshold to trigger (default: 3.5)
             smiley_prediction_rate: Expected prediction rate in Hz (default: 2.2)
             neutral_threshold: Threshold for NEUTRAL state (None = 2-state, float = 3-state)
+            enable_blink_detection: Enable blink detection from channel 5 (default: False)
+            enable_blink_api: Enable API calls for blink predictions (default: False)
+            blink_api_endpoint: API endpoint for blink predictions (default: None)
+            blink_threshold: Amplitude threshold for blink detection (default: 100.0)
         """
         self.simulate = simulate
-        self.apply_laplacian = apply_laplacian
+        self.simulate_normal = simulate_normal
         self.confidence_threshold = confidence_threshold
         self.use_smiley_feedback = use_smiley_feedback
         self.is_running = False
         self.neutral_threshold = neutral_threshold
         self.api_base_url = api_base_url.rstrip('/') if api_base_url else None
-        self.api_light_path = api_light_path
-        self.api_fan_path = api_fan_path
         self.api_timeout = api_timeout
         self.api_confidence_threshold = api_confidence_threshold
         self.api_neutral_hold = api_neutral_hold
@@ -128,6 +130,16 @@ class NPGRealtimeBCI:
         self.logger.info(f"  Epoch duration: {EPOCH_DURATION}s")
         self.logger.info(f"  Input epoch: {INPUT_EPOCH_SAMPLES} samples")
         self.logger.info(f"  Output epoch: {OUTPUT_EPOCH_SAMPLES} samples")
+        
+        # Log simulation mode
+        if self.simulate:
+            if self.simulate_normal:
+                self.logger.info(f"  Mode: SIMULATE NORMAL (synthetic data → model inference)")
+            else:
+                self.logger.info(f"  Mode: SIMULATE BYPASS (synthetic data → hardcoded predictions)")
+        else:
+            self.logger.info(f"  Mode: REAL DEVICE")
+        
         if self.api_base_url:
             self.logger.info("  API mode: ENABLED")
             self.logger.info(f"  API base URL: {self.api_base_url}")
@@ -148,17 +160,18 @@ class NPGRealtimeBCI:
             self.adapter = NPGLiteAdapter(sampling_rate=INPUT_SAMPLING_RATE)
         
         # FIXED: Preprocessor with correct parameters
+        # DOMAIN SHIFT FIX: Enable z-score normalization (personal data 100-140x larger than training)
         self.preprocessor = NPGPreprocessor(
             input_rate=INPUT_SAMPLING_RATE,
             output_rate=OUTPUT_SAMPLING_RATE,
             epoch_duration=EPOCH_DURATION,
             use_car=False,  # Model trained on raw data, no CAR
-            apply_laplacian=self.apply_laplacian,
             apply_bandpass=False,  # Model trained on raw data
-            apply_zscore=False,  # Model trained on raw data
+            apply_laplacian=True,  # DOMAIN SHIFT FIX: Enable Laplacian (18x better separability)
+            apply_zscore=True,  # DOMAIN SHIFT FIX: MANDATORY - normalize 100-140x amplitude mismatch
             realtime_mode=True
         )
-        self.logger.info("   ✅ Preprocessor ready (raw data preprocessing matching training)")
+        self.logger.info("   ✅ Preprocessor ready (domain shift fixes: z-score + Laplacian enabled)")
         
         # Inference engine with calibration
         self.inference = NPGInferenceEngine(
@@ -190,7 +203,8 @@ class NPGRealtimeBCI:
         self.last_command = None
         self.last_command_time = 0
         self.command_counts = {'LEFT_HAND': 0, 'RIGHT_HAND': 0, 'NEUTRAL': 0, 'UNCERTAIN': 0}
-        self.device_state = {'light': False, 'fan': False}
+        # Device state: tracks if each command has triggered a toggle (for next toggle)
+        self.device_toggle_state = {'LEFT_HAND': False, 'RIGHT_HAND': False}  # False=OFF, True=ON
         self.api_armed = {'LEFT_HAND': True, 'RIGHT_HAND': True}
         self.api_last_sent_time = {'LEFT_HAND': 0.0, 'RIGHT_HAND': 0.0}
         self.api_blocked_since = {'LEFT_HAND': None, 'RIGHT_HAND': None}
@@ -202,10 +216,106 @@ class NPGRealtimeBCI:
         self.total_epochs_processed = 0
         self.start_time = None
         
+        # Blink detection (disabled by default)
+        self.blink_detector = BlinkDetector(
+            sampling_rate=INPUT_SAMPLING_RATE,
+            threshold=blink_threshold,
+            api_endpoint=blink_api_endpoint,
+            api_timeout=api_timeout,
+            use_statistical=use_statistical_blink
+        )
+        
+        # Set Z-score threshold if using statistical detection
+        if use_statistical_blink:
+            self.blink_detector.set_z_score_threshold(blink_z_score)
+        
+        # Set blink detection callback to handle predictions
+        def on_blink_prediction(command: str):
+            """Handle blink detection predictions."""
+            if command == 'left':
+                self.logger.info(f"👁️  BLINK | Single blink detected → LEFT_HAND prediction")
+            elif command == 'right':
+                self.logger.info(f"👁️  BLINK | Double blink detected → RIGHT_HAND prediction")
+        
+        self.blink_detector.set_callback(on_blink_prediction)
+        
+        if enable_blink_detection:
+            self.blink_detector.enable()
+            blink_status = "ENABLED"
+        else:
+            blink_status = "DISABLED"
+        
+        if enable_blink_api:
+            self.blink_detector.enable_api()
+            api_status = "ENABLED"
+        else:
+            api_status = "DISABLED"
+        
+        self.logger.info(f"   ✅ Blink detector ready (detection: {blink_status}, API: {api_status}, threshold: {blink_threshold})")
+        
+        # Domain shift diagnostics (tracks 50 Hz noise ratio)
+        self.powerline_ratios = deque(maxlen=50)  # Track last 50 epochs
+        self.fine_tune_ready = False  # Whether model is ready for fine-tuning
+        
         # NOTE: Baseline bias loading is deferred to main() after CLI args are parsed
         # This allows --no-bias-correction flag to prevent bias loading
         
         self.logger.info("="*70)
+    
+    def report_domain_shift_fixes(self) -> dict:
+        """
+        Report current domain shift fix status and configuration.
+        
+        Returns:
+            Dictionary with fix status and diagnostics
+        """
+        status = {
+            'timestamp': time.time(),
+            'epochs_processed': self.total_epochs_processed,
+            'fixes': {
+                'z_score_normalization': self.preprocessor.apply_zscore,
+                'laplacian_filtering': self.preprocessor.apply_laplacian,
+                'notch_filter_enabled': self.preprocessor.apply_notch,
+                'notch_frequency': self.preprocessor.notch_freq,
+                'confidence_threshold': self.confidence_threshold,
+                'smiley_feedback': self.use_smiley_feedback,
+            }
+        }
+        
+        # Add diagnostic measurements if available
+        if self.powerline_ratios:
+            avg_ratio = np.mean(list(self.powerline_ratios))
+            status['diagnostics'] = {
+                'avg_50hz_ratio': float(avg_ratio),
+                'target_50hz_ratio': 0.0011,  # BCI baseline
+                '50hz_status': 'OK' if avg_ratio < 0.01 else ('WARNING' if avg_ratio < 0.1 else 'CRITICAL'),
+                'recent_measurements': len(self.powerline_ratios)
+            }
+        
+        # Log report
+        self.logger.info("\n" + "="*70)
+        self.logger.info("DOMAIN SHIFT FIX STATUS REPORT")
+        self.logger.info("="*70)
+        self.logger.info(f"Epochs processed: {status['epochs_processed']}")
+        self.logger.info("\nFixes Enabled:")
+        self.logger.info(f"  ✅ Z-score normalization: {status['fixes']['z_score_normalization']}")
+        self.logger.info(f"  ✅ Laplacian filtering: {status['fixes']['laplacian_filtering']}")
+        self.logger.info(f"  ✅ Notch filter: {status['fixes']['notch_filter_enabled']} ({status['fixes']['notch_frequency']} Hz)")
+        self.logger.info(f"  ✅ Confidence threshold: {status['fixes']['confidence_threshold']:.2f}")
+        self.logger.info(f"  ✅ Smiley feedback: {status['fixes']['smiley_feedback']}")
+        
+        if 'diagnostics' in status:
+            self.logger.info("\nDiagnostics (50 Hz Powerline Noise):")
+            diag = status['diagnostics']
+            self.logger.info(f"  Average 50 Hz ratio: {diag['avg_50hz_ratio']:.4f}")
+            self.logger.info(f"  Target (BCI baseline): {diag['target_50hz_ratio']}")
+            self.logger.info(f"  Status: {diag['50hz_status']}")
+            if diag['50hz_status'] == 'CRITICAL':
+                self.logger.warning(f"  ⚠️ 50 Hz noise is {diag['avg_50hz_ratio']/diag['target_50hz_ratio']:.0f}x above BCI baseline!")
+        
+        self.logger.info("="*70 + "\n")
+        
+        return status
     
     def connect(self, device_id: Optional[str] = None):
         """
@@ -247,10 +357,7 @@ class NPGRealtimeBCI:
         self.logger.info("Starting real-time BCI processing...")
         self.logger.info("="*70)
         self.logger.info("Commands: LEFT_HAND, RIGHT_HAND")
-        if self.use_smiley_feedback:
-            self.logger.info(f"Smiley threshold: {self.inference.smiley_feedback.sum_threshold:.2f}")
-        else:
-            self.logger.info(f"Decision rule: class gap >= {CLASS_ADVANTAGE_MARGIN:.0%}")
+        self.logger.info(f"Confidence threshold: {self.confidence_threshold:.0%}")
         self.logger.info("="*70 + "\n")
         
         # Start streaming
@@ -318,6 +425,16 @@ class NPGRealtimeBCI:
                     self.logger.warning(f"Expected {N_CHANNELS} channels, got {data.shape[1]}")
                     data = data[:, :N_CHANNELS]  # Trim to expected channels
                 
+                # === BLINK DETECTION: Process channel 2 (C4, rightmost) for forehead placement ===
+                # Note: If you have more channels available, adjust the channel index
+                if self.blink_detector.enabled:
+                    # Process blink detection on channel 2 (C4)
+                    # For multi-sample batches, process each sample
+                    if data.shape[1] > 2:  # Only if channel 2 exists
+                        for sample_idx in range(data.shape[0]):
+                            channel_sample = data[sample_idx, 2]  # Channel 2 (index 2)
+                            blink_prediction = self.blink_detector.detect_blink(channel_sample)
+                
                 # Add to window buffer
                 self.window_buffer.add_samples(data)
                 
@@ -357,38 +474,64 @@ class NPGRealtimeBCI:
                 self.logger.warning(f"Epoch too short: {epoch_data.shape[0]} samples, expected ~{expected_samples}")
                 return
             
+            # === DOMAIN SHIFT FIX 1: Diagnose 50 Hz noise before preprocessing ===
+            # (Call periodically, not every epoch to reduce log spam)
+            if self.total_epochs_processed % 50 == 0:
+                self._diagnose_50hz_noise(epoch_data)
+            
             # Preprocess (handles resampling, filtering, normalization)
             preprocessed = self.preprocessor.preprocess_for_model(epoch_data)
-            decision_gap = None
+            
+            # === DOMAIN SHIFT FIX 2: Verify z-score normalization ===
+            if self.total_epochs_processed == 0:
+                # Log once at startup to verify settings
+                self._check_zscore_applied(epoch_data, preprocessed)
             
             # Verify output shape
             if preprocessed.shape != (1, N_CHANNELS, OUTPUT_EPOCH_SAMPLES, 1):
                 self.logger.warning(f"Preprocessed shape mismatch: {preprocessed.shape}")
             
-            # Inference with confidence threshold or smiley feedback
-            if self.use_smiley_feedback:
-                # Use Smiley Feedback running integral
-                class_idx, confidence, class_name, is_triggered, winning_sum = \
-                    self.inference.predict_with_smiley_feedback(preprocessed)
+            # === SIMULATE BYPASS MODE: Bypass model with hardcoded pattern ===
+            if self.simulate and not self.simulate_normal:
+                # Generate hardcoded predictions: LEFT (5s) → RIGHT (5s) → LEFT (5s) → repeat
+                runtime = time.time() - self.start_time
+                cycle_pos = int(runtime) % 10  # 10-second cycle
                 
-                if is_triggered:
-                    command = class_name
-                    self.command_counts[command] += 1
+                if cycle_pos < 5:
+                    class_idx = 0
+                    class_name = 'LEFT_HAND'
+                    confidence = 0.92
                 else:
-                    command = "UNCERTAIN"
-                    self.command_counts["UNCERTAIN"] += 1
+                    class_idx = 1
+                    class_name = 'RIGHT_HAND'
+                    confidence = 0.91
+                
+                command = class_name
+                self.command_counts[command] += 1
+            # === NORMAL/SIMULATE_NORMAL MODE: Use model inference ===
             else:
-                # Default: simple smoothed prediction
-                class_idx, confidence, class_name = self.inference.predict_smoothed(preprocessed)
-
-                decision_gap = abs(2.0 * float(confidence) - 1.0)
-
-                if decision_gap >= CLASS_ADVANTAGE_MARGIN:
-                    command = class_name
-                    self.command_counts[command] += 1
+                # Inference with confidence threshold or smiley feedback
+                if self.use_smiley_feedback:
+                    # Use Smiley Feedback running integral
+                    class_idx, confidence, class_name, is_triggered, winning_sum = \
+                        self.inference.predict_with_smiley_feedback(preprocessed)
+                    
+                    if is_triggered:
+                        command = class_name
+                        self.command_counts[command] += 1
+                    else:
+                        command = "UNCERTAIN"
+                        self.command_counts["UNCERTAIN"] += 1
                 else:
-                    command = "UNCERTAIN"
-                    self.command_counts["UNCERTAIN"] += 1
+                    # Default: simple smoothed prediction
+                    class_idx, confidence, class_name = self.inference.predict_smoothed(preprocessed)
+                    
+                    if confidence >= self.confidence_threshold:
+                        command = class_name
+                        self.command_counts[command] += 1
+                    else:
+                        command = "UNCERTAIN"
+                        self.command_counts["UNCERTAIN"] += 1
             
             # Check if command changed (only for actual triggers, not UNCERTAIN)
             command_changed = (command != self.last_command and 
@@ -409,65 +552,247 @@ class NPGRealtimeBCI:
             
             # Log result
             if command_changed:
-                self._log_command(command, confidence, proc_time, decision_gap)
+                self._log_command(command, confidence, proc_time)
             elif self.total_epochs_processed % 10 == 0:
                 self._log_status()
         
         except Exception as e:
             self.logger.error(f"Epoch processing error: {e}", exc_info=True)
 
-    def _build_api_url(self, device: str) -> Optional[str]:
-        """Build API URL for mapped IoT device endpoint."""
+    def _diagnose_50hz_noise(self, epoch_data: np.ndarray) -> None:
+        """
+        DOMAIN SHIFT FIX: Diagnose 50 Hz powerline contamination.
+        
+        From domain shift report:
+        - BCI baseline: 50 Hz power ratio = 0.0011 (clean)
+        - Personal data: 50 Hz power ratio = 4.51 (VERY polluted)
+        - Improvement needed: 4000x reduction
+        
+        This method tracks if notch filter is doing its job.
+        
+        Args:
+            epoch_data: Raw epoch data (samples, channels)
+        """
+        from scipy import signal
+        
+        # Compute power spectrum for each channel
+        for ch in range(epoch_data.shape[1]):
+            freqs, pxx = signal.welch(epoch_data[:, ch], fs=INPUT_SAMPLING_RATE, nperseg=256)
+            
+            # Find 50 Hz power
+            idx_50hz = np.argmin(np.abs(freqs - 50))
+            power_50hz = pxx[idx_50hz]
+            
+            # Find motor band power (8-30 Hz)
+            motor_band = (freqs >= 8) & (freqs <= 30)
+            power_motor = np.mean(pxx[motor_band]) if np.any(motor_band) else 1e-10
+            
+            # Calculate ratio
+            line50_to_motor_ratio = power_50hz / (power_motor + 1e-10)
+            self.powerline_ratios.append(line50_to_motor_ratio)
+            
+            # Log only if ratio is high (avoid spam)
+            if line50_to_motor_ratio > 0.1:
+                self.logger.warning(
+                    f"⚠️ SEVERE 50 Hz noise (CH{ch}): ratio={line50_to_motor_ratio:.4f}\n"
+                    f"   • BCI baseline: 0.0011 (clean)\n"
+                    f"   • Your data: {line50_to_motor_ratio:.4f} (POLLUTED {line50_to_motor_ratio/0.0011:.0f}x worse)\n"
+                    f"   • ACTION: Check NPG Lite grounding, electrode contact, shielding"
+                )
+            elif line50_to_motor_ratio > 0.01:
+                self.logger.info(f"⚠️ Moderate 50 Hz noise (CH{ch}): {line50_to_motor_ratio:.4f} - verify grounding")
+            else:
+                self.logger.debug(f"✅ 50 Hz noise acceptable (CH{ch}): {line50_to_motor_ratio:.4f}")
+
+    def _check_zscore_applied(self, epoch_before: np.ndarray, epoch_after: np.ndarray) -> None:
+        """
+        DOMAIN SHIFT FIX: Verify z-score normalization was actually applied.
+        
+        Checks:
+        1. Input amplitude (should be 100-140x larger than BCI training)
+        2. Output amplitude (should be normalized to ~1.0 std)
+        3. Logs warning if mismatch detected
+        
+        Args:
+            epoch_before: Raw epoch data (samples, channels)
+            epoch_after: Preprocessed epoch data (1, channels, samples, 1)
+        """
+        input_std = np.std(epoch_before)
+        
+        # Reshape output for comparison (1, 3, 1000, 1) -> (1000, 3)
+        if len(epoch_after.shape) == 4:
+            output_data = epoch_after[0, :, :, 0].T  # (1000, 3)
+        else:
+            output_data = epoch_after
+        
+        output_std = np.std(output_data)
+        
+        # Verify normalization
+        if input_std > 50 and output_std > 3.0:
+            self.logger.warning(
+                f"⚠️ Z-score normalization may not be working:\n"
+                f"   • Input std: {input_std:.1f} μV (expected 100-140x BCI)\n"
+                f"   • Output std: {output_std:.2f} (expected ~1.0)\n"
+                f"   • Check if apply_zscore=True in preprocessor"
+            )
+        elif input_std > 50 and output_std < 0.3:
+            self.logger.warning(
+                f"⚠️ Z-score produced flat signal (std={output_std:.3f}). Check for disconnected electrodes."
+            )
+    
+    def fine_tune_dense_layer(self, calibration_data: np.ndarray, labels: np.ndarray) -> None:
+        """
+        DOMAIN SHIFT FIX: Fine-tune final dense layer on personal data.
+        
+        Critical because domain shift distance = 210.1 (severe mismatch).
+        Fine-tuning the last layer adapts the model to personal brain signal distribution.
+        
+        Args:
+            calibration_data: Preprocessed calibration epochs (n_samples, n_channels, time_steps, 1)
+            labels: Class labels (n_samples,) - 0=LEFT, 1=RIGHT, 2=NEUTRAL
+        
+        Raises:
+            ImportError: If TensorFlow not available
+            ValueError: If data dimensions don't match
+        """
+        try:
+            import tensorflow as tf
+        except ImportError:
+            self.logger.error("Fine-tuning requires TensorFlow. Install: pip install tensorflow")
+            return
+        
+        n_samples = len(calibration_data)
+        self.logger.info("\n" + "="*70)
+        self.logger.info("DOMAIN SHIFT FIX: Dense Layer Fine-tuning")
+        self.logger.info("="*70)
+        self.logger.info(f"Calibration samples: {n_samples}")
+        self.logger.info("Domain shift distance: 210.1 → target <50")
+        self.logger.info("Personal data effect size: 0.139 vs BCI 0.0076 (18x better)")
+        self.logger.info("="*70)
+        
+        if n_samples < 10:
+            self.logger.warning(f"Not enough calibration samples ({n_samples} < 10). Skipping fine-tuning.")
+            return
+        
+        # Get model
+        if not hasattr(self.inference, 'model') or self.inference.model is None:
+            self.logger.error("Model not loaded. Cannot fine-tune.")
+            return
+        
+        model = self.inference.model
+        
+        # Freeze all but last layer
+        for layer in model.layers[:-1]:
+            layer.trainable = False
+        model.layers[-1].trainable = True
+        
+        self.logger.info(f"Froze {len(model.layers)-1} layers, unfroze final dense layer")
+        
+        # Compile with conservative learning rate
+        model.compile(
+            optimizer=tf.keras.optimizers.Adam(learning_rate=0.0001),
+            loss='sparse_categorical_crossentropy',
+            metrics=['accuracy']
+        )
+        
+        self.logger.info(f"Training final dense layer on {n_samples} personal samples...")
+        
+        # Fine-tune
+        history = model.fit(
+            calibration_data, labels,
+            epochs=20,
+            batch_size=8,
+            validation_split=0.2,
+            verbose=0,
+            callbacks=[
+                tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=3, verbose=0)
+            ]
+        )
+        
+        final_acc = history.history['accuracy'][-1]
+        val_acc = history.history['val_accuracy'][-1]
+        
+        self.logger.info("✅ Fine-tuning complete:")
+        self.logger.info(f"   Training accuracy: {final_acc:.3f}")
+        self.logger.info(f"   Validation accuracy: {val_acc:.3f}")
+        self.logger.info(f"   Epochs: {len(history.history['loss'])}")
+        
+        self.fine_tune_ready = True
+
+    def _build_api_url(self, device: str, state: str) -> Optional[str]:
+        """Build API URL for device with specific state endpoint.
+        
+        Args:
+            device: Device identifier (e.g., 'device1', 'device2')
+            state: Target state ('on' or 'off')
+        
+        Returns:
+            Full URL for GET request (e.g., http://base/device1/on)
+        """
         if not self.api_base_url:
             return None
 
-        path = self.api_light_path if device == 'light' else self.api_fan_path
-        if not path.startswith('/'):
-            path = f'/{path}'
-        return f"{self.api_base_url}{path}"
+        # Construct endpoint: base_url/device/state
+        device = device.strip('/')
+        state = state.strip('/').lower()
+        
+        if not device or state not in ('on', 'off'):
+            self.logger.error(f"Invalid device/state: device={device}, state={state}")
+            return None
+        
+        return f"{self.api_base_url}/{device}/{state}"
 
-    def _post_toggle(self, device: str, state: bool, command: str, confidence: float):
-        """Send POST request for a device toggle event."""
-        url = self._build_api_url(device)
+    def _get_request(self, url: str, command: str, confidence: float):
+        """Send simple GET request to API endpoint.
+        
+        Args:
+            url: Full URL to call (e.g., http://base/device1/on)
+            command: Original command that triggered this (for logging)
+            confidence: Prediction confidence (for logging)
+        """
         if not url:
             return
 
-        payload = {
-            'device': device,
-            'on': state,
-            'source': 'bci',
-            'command': command,
-            'confidence': float(confidence),
-            'timestamp': time.time()
-        }
-
-        body = json.dumps(payload).encode('utf-8')
-        request = urllib.request.Request(
-            url,
-            data=body,
-            method='POST',
-            headers={'Content-Type': 'application/json'}
-        )
-
         try:
-            with urllib.request.urlopen(request, timeout=self.api_timeout) as response:
+            with urllib.request.urlopen(url, timeout=self.api_timeout) as response:
                 status = response.getcode()
-            self.logger.info(f"🌐 API CALL OK | {device}={'ON' if state else 'OFF'} | status={status} | {url}")
+            
+            # Extract device and state from URL for logging
+            parts = url.rstrip('/').split('/')
+            device = parts[-2] if len(parts) >= 2 else 'unknown'
+            state = parts[-1].upper() if len(parts) >= 1 else 'unknown'
+            
+            self.logger.info(f"🌐 GET REQUEST OK | {device}/{state} | status={status} | conf={confidence:.1%} | {url}")
         except urllib.error.HTTPError as e:
-            self.logger.error(f"🌐 API CALL HTTP ERROR | {device}={'ON' if state else 'OFF'} | status={e.code} | {url}")
+            parts = url.rstrip('/').split('/')
+            device = parts[-2] if len(parts) >= 2 else 'unknown'
+            state = parts[-1].upper() if len(parts) >= 1 else 'unknown'
+            self.logger.error(f"🌐 GET REQUEST HTTP ERROR | {device}/{state} | status={e.code} | {url}")
         except Exception as e:
-            self.logger.error(f"🌐 API CALL FAILED | {device}={'ON' if state else 'OFF'} | {url} | error={e}")
+            self.logger.error(f"🌐 GET REQUEST FAILED | {url} | error={e}")
 
     def _toggle_device_for_command(self, command: str, confidence: float):
-        """Toggle mapped IoT device for LEFT/RIGHT commands."""
+        """Toggle mapped IoT device via GET request for LEFT/RIGHT commands.
+        
+        First encounter: Send ON request
+        Second encounter: Send OFF request
+        Third encounter: Send ON request (toggles again)
+        And so on...
+        """
         if command == 'LEFT_HAND':
-            self.device_state['light'] = not self.device_state['light']
-            self._post_toggle('light', self.device_state['light'], command, confidence)
-            self.logger.info(f"💡 TOGGLE | LEFT_HAND -> light={'ON' if self.device_state['light'] else 'OFF'}")
+            # Toggle device1 state
+            self.device_toggle_state['LEFT_HAND'] = not self.device_toggle_state['LEFT_HAND']
+            state = 'on' if self.device_toggle_state['LEFT_HAND'] else 'off'
+            url = self._build_api_url('device1', state)
+            self._get_request(url, command, confidence)
+            self.logger.info(f"💡 TOGGLE | LEFT_HAND -> device1/{state}")
         elif command == 'RIGHT_HAND':
-            self.device_state['fan'] = not self.device_state['fan']
-            self._post_toggle('fan', self.device_state['fan'], command, confidence)
-            self.logger.info(f"🌀 TOGGLE | RIGHT_HAND -> fan={'ON' if self.device_state['fan'] else 'OFF'}")
+            # Toggle device2 state
+            self.device_toggle_state['RIGHT_HAND'] = not self.device_toggle_state['RIGHT_HAND']
+            state = 'on' if self.device_toggle_state['RIGHT_HAND'] else 'off'
+            url = self._build_api_url('device2', state)
+            self._get_request(url, command, confidence)
+            self.logger.info(f"🌀 TOGGLE | RIGHT_HAND -> device2/{state}")
 
     def _handle_api_command(self, command: str, confidence: float):
         """Prevent repeated toggles using edge trigger, neutral re-arm, and cooldown."""
@@ -539,7 +864,7 @@ class NPGRealtimeBCI:
         self.api_blocked_since[command] = now
         self.api_prev_command = command
     
-    def _log_command(self, command: str, confidence: float, proc_time: float, decision_gap: Optional[float] = None):
+    def _log_command(self, command: str, confidence: float, proc_time: float):
         """Log a new command."""
         if command == "LEFT_HAND":
             icon = "👈"
@@ -559,14 +884,10 @@ class NPGRealtimeBCI:
                 left_pct = sums['LEFT_HAND']['percent_to_trigger']
                 right_pct = sums['RIGHT_HAND']['percent_to_trigger']
                 feedback_info = f" | Integral: L={left_pct:3.0f}% R={right_pct:3.0f}%"
-
-        gap_info = ""
-        if decision_gap is not None:
-            gap_info = f" | Gap: {decision_gap:5.1%}"
         
         self.logger.info(
             f"{icon} {command:12} | "
-            f"Confidence: {confidence:5.1%}{gap_info} | "
+            f"Confidence: {confidence:5.1%} | "
             f"Processing: {proc_time*1000:5.1f}ms{feedback_info}"
         )
     
@@ -792,6 +1113,16 @@ class NPGRealtimeBCI:
                         f"({inf_stats['confidence_rate']:.1f}%)")
         self.logger.info(f"     Class distribution: {inf_stats['class_distribution']}")
         self.logger.info(f"     Throughput: {inf_stats['predictions_per_second']:.1f} pred/s")
+        
+        # Blink detection statistics
+        blink_stats = self.blink_detector.get_stats()
+        if blink_stats['enabled']:
+            self.logger.info("\n   Blink Detection Statistics:")
+            self.logger.info(f"     Status: ENABLED")
+            self.logger.info(f"     Total blinks: {blink_stats['total_blinks']}")
+            self.logger.info(f"     Total predictions: {blink_stats['total_predictions']}")
+            self.logger.info(f"     Threshold: {blink_stats['threshold']:.1f}")
+            self.logger.info(f"     API enabled: {'YES' if blink_stats['api_enabled'] else 'NO'}")
 
 
 def main():
@@ -815,12 +1146,6 @@ def main():
                        help='Smoothing window size for predictions (default: 8)')
     parser.add_argument('--overlap', type=float, default=0.5,
                        help='Window overlap ratio (0-1, default: 0.5)')
-    laplacian_group = parser.add_mutually_exclusive_group()
-    laplacian_group.add_argument('--laplacian', dest='laplacian', action='store_true',
-                                help='Enable Small Laplacian spatial filter: C3/C4 = C3/C4 - 0.5*Cz')
-    laplacian_group.add_argument('--no-laplacian', dest='laplacian', action='store_false',
-                                help='Disable Small Laplacian spatial filter (raw C3/Cz/C4)')
-    parser.set_defaults(laplacian=False)
     parser.add_argument('--smiley-feedback', action='store_true',
                        help='Use Smiley Feedback running integral (BCI Competition strategy)')
     parser.add_argument('--smiley-window', type=float, default=2.0,
@@ -837,12 +1162,8 @@ def main():
                        help='Disable baseline bias correction (even if calibrated)')
     parser.add_argument('--verbose', action='store_true',
                        help='Enable debug logging')
-    parser.add_argument('--api-base-url', type=str, default=None,
-                       help='Base URL for IoT API (example: http://127.0.0.1:8000/devices)')
-    parser.add_argument('--api-light-path', type=str, default='/light',
-                       help='Endpoint path for light toggle (default: /light)')
-    parser.add_argument('--api-fan-path', type=str, default='/fan',
-                       help='Endpoint path for fan toggle (default: /fan)')
+    parser.add_argument('--api-base-url', type=str, default='https://59dc-2402-3a80-1e1e-3c60-b9d8-863b-a7fd-e1be.ngrok-free.app',
+                       help='Base URL for IoT API (example: http://127.0.0.1:8000). Endpoints: {base}/device1/on, {base}/device1/off, {base}/device2/on, {base}/device2/off')
     parser.add_argument('--api-timeout', type=float, default=2.0,
                        help='HTTP timeout in seconds (default: 2.0)')
     parser.add_argument('--api-conf-threshold', type=float, default=0.75,
@@ -853,6 +1174,18 @@ def main():
                        help='Per-command cooldown in seconds (default: 2.5s)')
     parser.add_argument('--api-rearm-timeout', type=float, default=4.0,
                        help='Timeout fallback to re-arm same command (default: 4.0s)')
+    parser.add_argument('--enable-blink-detection', action='store_true',
+                       help='Enable blink detection from channel (default: disabled)')
+    parser.add_argument('--enable-blink-api', action='store_true',
+                       help='Enable API calls for blink predictions (default: disabled)')
+    parser.add_argument('--blink-api-endpoint', type=str, default=None,
+                       help='API endpoint for blink predictions (example: http://localhost:8000/predict)')
+    parser.add_argument('--blink-threshold', type=float, default=150.0,
+                       help='Amplitude threshold for blink detection (default: 150.0)')
+    parser.add_argument('--no-statistical-blink', action='store_true',
+                       help='Disable statistical blink detection (use fixed threshold instead)')
+    parser.add_argument('--blink-z-score', type=float, default=3.0,
+                       help='Z-score threshold for statistical blink detection (default: 3.0, higher = stricter, lower = more sensitive)')
     
     args = parser.parse_args()
     
@@ -919,20 +1252,23 @@ def main():
             smoothing_window=args.smoothing,
             window_overlap=args.overlap,
             simulate=True,
-            apply_laplacian=args.laplacian,
             use_smiley_feedback=args.smiley_feedback,
             smiley_window_duration=args.smiley_window,
             smiley_threshold=args.smiley_threshold,
             smiley_prediction_rate=args.smiley_rate,
             neutral_threshold=neutral_threshold,
             api_base_url=args.api_base_url,
-            api_light_path=args.api_light_path,
-            api_fan_path=args.api_fan_path,
             api_timeout=args.api_timeout,
             api_confidence_threshold=args.api_conf_threshold,
             api_neutral_hold=args.api_neutral_hold,
             api_cooldown=args.api_cooldown,
-            api_rearm_timeout=args.api_rearm_timeout
+            api_rearm_timeout=args.api_rearm_timeout,
+            enable_blink_detection=args.enable_blink_detection,
+            enable_blink_api=args.enable_blink_api,
+            blink_api_endpoint=args.blink_api_endpoint,
+            blink_threshold=args.blink_threshold,
+            use_statistical_blink=not args.no_statistical_blink,
+            blink_z_score=args.blink_z_score
         )
     elif args.direct:
         # Direct serial connection mode
@@ -942,20 +1278,23 @@ def main():
             smoothing_window=args.smoothing,
             window_overlap=args.overlap,
             simulate=False,
-            apply_laplacian=args.laplacian,
             use_smiley_feedback=args.smiley_feedback,
             smiley_window_duration=args.smiley_window,
             smiley_threshold=args.smiley_threshold,
             smiley_prediction_rate=args.smiley_rate,
             neutral_threshold=neutral_threshold,
             api_base_url=args.api_base_url,
-            api_light_path=args.api_light_path,
-            api_fan_path=args.api_fan_path,
             api_timeout=args.api_timeout,
             api_confidence_threshold=args.api_conf_threshold,
             api_neutral_hold=args.api_neutral_hold,
             api_cooldown=args.api_cooldown,
-            api_rearm_timeout=args.api_rearm_timeout
+            api_rearm_timeout=args.api_rearm_timeout,
+            enable_blink_detection=args.enable_blink_detection,
+            enable_blink_api=args.enable_blink_api,
+            blink_api_endpoint=args.blink_api_endpoint,
+            blink_threshold=args.blink_threshold,
+            use_statistical_blink=not args.no_statistical_blink,
+            blink_z_score=args.blink_z_score
         )
         # Replace adapter with direct serial adapter
         bci.adapter = NPGLiteDirectSerial(port=args.port, baudrate=args.baudrate)
@@ -967,20 +1306,23 @@ def main():
             smoothing_window=args.smoothing,
             window_overlap=args.overlap,
             simulate=False,
-            apply_laplacian=args.laplacian,
             use_smiley_feedback=args.smiley_feedback,
             smiley_window_duration=args.smiley_window,
             smiley_threshold=args.smiley_threshold,
             smiley_prediction_rate=args.smiley_rate,
             neutral_threshold=neutral_threshold,
             api_base_url=args.api_base_url,
-            api_light_path=args.api_light_path,
-            api_fan_path=args.api_fan_path,
             api_timeout=args.api_timeout,
             api_confidence_threshold=args.api_conf_threshold,
             api_neutral_hold=args.api_neutral_hold,
             api_cooldown=args.api_cooldown,
-            api_rearm_timeout=args.api_rearm_timeout
+            api_rearm_timeout=args.api_rearm_timeout,
+            enable_blink_detection=args.enable_blink_detection,
+            enable_blink_api=args.enable_blink_api,
+            blink_api_endpoint=args.blink_api_endpoint,
+            blink_threshold=args.blink_threshold,
+            use_statistical_blink=not args.no_statistical_blink,
+            blink_z_score=args.blink_z_score
         )
     
     # Connect

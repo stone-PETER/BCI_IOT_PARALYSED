@@ -145,6 +145,50 @@ class ModelFactory:
         
         AVAILABLE_MODELS[name] = model_class
         logging.info(f"Registered model: {name}")
+    
+    @staticmethod
+    def load_from_registry(user_id: str) -> Dict[str, Any]:
+        """
+        Load personalized model info from registry.
+        
+        Args:
+            user_id: User identifier for personalized model
+            
+        Returns:
+            Dictionary with 'path' and optional 'neutral_threshold' keys
+            
+        Raises:
+            FileNotFoundError: If registry file not found
+            KeyError: If user_id not found in registry
+        """
+        import json
+        
+        # Find registry file (search in same directory as MODEL_FACTORY)
+        registry_path = Path(__file__).parent / 'model_registry.json'
+        
+        if not registry_path.exists():
+            raise FileNotFoundError(f"Model registry not found: {registry_path}")
+        
+        # Load registry
+        with open(registry_path, 'r') as f:
+            registry = json.load(f)
+        
+        # Look up user's personalized model
+        personalized = registry.get('personalized_models', {})
+        if user_id not in personalized:
+            available = list(personalized.keys())
+            raise KeyError(
+                f"User '{user_id}' not found in registry. "
+                f"Available users: {available}"
+            )
+        
+        model_info = personalized[user_id]
+        
+        return {
+            'path': model_info.get('model_path'),
+            'neutral_threshold': model_info.get('threshold'),
+            'metadata': model_info.get('metadata', {})
+        }
 
 
 def create_model_from_config(config_path: str, compile_model: bool = True) -> Any:

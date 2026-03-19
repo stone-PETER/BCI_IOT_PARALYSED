@@ -1,0 +1,29 @@
+{
+  "original_shape": [
+    199,
+    3,
+    1000
+  ],
+  "original_n_trials": 199,
+  "original_class_distribution": {
+    "LEFT": 100,
+    "RIGHT": 99
+  },
+  "steps_applied": [
+    "notch_50hz",
+    "bandpass_4_40hz",
+    "car",
+    "zscore_normalization"
+  ],
+  "final_shape": [
+    199,
+    3,
+    1000
+  ],
+  "final_n_trials": 199,
+  "final_class_distribution": {
+    "LEFT": 100,
+    "RIGHT": 99
+  },
+  "retention_rate": 1.0
+}

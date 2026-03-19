@@ -1,0 +1,90 @@
+{
+  "bci": {
+    "name": "bci4_2b",
+    "shape": [
+      6520,
+      3,
+      1000
+    ],
+    "sampling_rate": 250.0,
+    "channel_std_mean": [
+      4.543539524078369,
+      4.629179954528809,
+      4.447103023529053
+    ],
+    "mu_power_mean": [
+      3.071944304888264,
+      3.6914253932120977,
+      3.0846096062042903
+    ],
+    "beta_power_mean": [
+      2.229420129741814,
+      2.3282264540250637,
+      2.294807470019124
+    ],
+    "line50_to_motor_ratio": 0.0011257594332156867,
+    "class_separation": {
+      "classes": [
+        0,
+        1
+      ],
+      "effect_size_per_feature": [
+        0.01325774380549985,
+        0.009355037592062238,
+        0.00310653248531701,
+        0.0015664787705916142,
+        0.011074278366360627,
+        0.007371327514572062
+      ],
+      "mean_effect_size": 0.0076218997557339005
+    }
+  },
+  "personal": {
+    "name": "personal_npg",
+    "shape": [
+      199,
+      3,
+      1000
+    ],
+    "sampling_rate": 250.0,
+    "channel_std_mean": [
+      488.3052062988281,
+      644.8257446289062,
+      649.3076782226562
+    ],
+    "mu_power_mean": [
+      572.363695951387,
+      1026.5732122905174,
+      745.8328898000442
+    ],
+    "beta_power_mean": [
+      2339.6677930116007,
+      3069.6139534098147,
+      2633.208022752704
+    ],
+    "line50_to_motor_ratio": 4.507169233883571,
+    "class_separation": {
+      "classes": [
+        0,
+        1
+      ],
+      "effect_size_per_feature": [
+        0.13539489032485033,
+        0.23215491512313852,
+        0.15312659049045368,
+        0.05775644668859085,
+        0.14560829610751647,
+        0.11040688347061284
+      ],
+      "mean_effect_size": 0.1390746703675271
+    }
+  },
+  "feature_frechet_distance": 210.1120442114972,
+  "recommendations": [
+    "Powerline noise is higher in personal data; keep notch enabled and improve grounding/contact.",
+    "Amplitude scale mismatch detected; test z-score normalization ON for realtime.",
+    "Domain shift is high; fine-tune final dense layer on personal labeled data.",
+    "Evaluate both --laplacian and --no-laplacian using the same session and keep whichever gives better class separation.",
+    "Use class-gap decision with a safer margin (start 0.05, try 0.08 if toggling remains unstable)."
+  ]
+}
