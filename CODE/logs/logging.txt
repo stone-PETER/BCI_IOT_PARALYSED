@@ -357,3 +357,4 @@
 [20260318_102330] Error fetching stream status:
 [20260318_102340] Error fetching stream status:
 [20260318_102345] Error fetching stream status:
+[20260426_171730] Connection polling error:

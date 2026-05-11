@@ -283,6 +283,57 @@ class EEGAugmentationPipeline:
         
         return augmented_data, augmented_labels
 
+    def window_cropping(self, data, labels=None, window_size=500, overlap=0.5):
+        """
+        Slice long trials into overlapping smaller windows to artificially expand dataset size.
+        
+        Args:
+            data: EEG data array of shape (epochs, timepoints, channels)
+            labels: Array of labels corresponding to each epoch (optional)
+            window_size: Size of each cropped window in samples
+            overlap: Overlap fraction between consecutive windows (0.0 to 0.99)
+            
+        Returns:
+            If labels is provided: Tuple of (cropped_data, cropped_labels)
+            If labels is None: cropped_data
+        """
+        epochs, timepoints, channels = data.shape
+        
+        if timepoints <= window_size:
+            self.logger.warning(f"Timepoints ({timepoints}) <= window_size ({window_size}). No cropping applied.")
+            if labels is not None:
+                return data, labels
+            return data
+            
+        step_size = int(window_size * (1 - overlap))
+        if step_size <= 0:
+            step_size = 1
+            
+        num_windows = (timepoints - window_size) // step_size + 1
+        
+        cropped_data = []
+        cropped_labels = [] if labels is not None else None
+        
+        for i in range(epochs):
+            for w in range(num_windows):
+                start = w * step_size
+                end = start + window_size
+                window_data = data[i, start:end, :]
+                cropped_data.append(window_data)
+                
+                if labels is not None:
+                    cropped_labels.append(labels[i])
+                    
+        cropped_data = np.stack(cropped_data, axis=0)
+        
+        if labels is not None:
+            cropped_labels = np.array(cropped_labels)
+            self.logger.info(f"Window cropping: {epochs} trials of length {timepoints} -> {len(cropped_data)} trials of length {window_size}")
+            return cropped_data, cropped_labels
+            
+        self.logger.info(f"Window cropping: {epochs} trials of length {timepoints} -> {len(cropped_data)} trials of length {window_size}")
+        return cropped_data
+
 
 def demo_augmentation():
     """Demonstrate augmentation effects on sample data."""

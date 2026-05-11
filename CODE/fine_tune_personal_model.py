@@ -108,6 +108,7 @@ class PersonalModelFineTuner:
         
         # Extract user_id from filename
         self.user_id = self.calibration_file.stem.split('_calibration_')[0]
+        self.timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
         
         # Paths
         self.save_dir = Path(__file__).parent / "models" / "personalized"
@@ -128,7 +129,8 @@ class PersonalModelFineTuner:
         """Load pretrained base model."""
         if self.from_scratch:
             self.logger.info("Building fresh EEGNet model from config_2b.yaml...")
-            eegnet = EEGNet(config_path="config_2b.yaml")
+            config_path = str(Path(__file__).parent / "config_2b.yaml")
+            eegnet = EEGNet(config_path=config_path)
             model = eegnet.build_model()
             self.logger.info(f"✅ Built fresh model with {model.count_params():,} parameters")
             self.logger.info(f"   Layers: {len(model.layers)}")
@@ -221,7 +223,8 @@ class PersonalModelFineTuner:
         """
         self.logger.info("Loading calibration data...")
         
-        loader = BCI4_2B_Loader("config_2b.yaml")
+        config_path = str(Path(__file__).parent / "config_2b.yaml")
+        loader = BCI4_2B_Loader(config_path)
         
         if self.mix_benchmark:
             self.logger.info(f"  Mixing personal + benchmark (personal weight: {self.personal_weight})")
@@ -421,10 +424,18 @@ class PersonalModelFineTuner:
         Returns:
             X_train, X_val, y_train, y_val: Preprocessed and split data
         """
-        self.logger.info(f"Preparing data for training...")
+        self.logger.info("Preparing data for training...")
         
-        # Step 1: Apply z-score normalization per trial
-        self.logger.info(f"  Step 1: Z-score normalization...")
+        # Ensure only valid classes (0 and 1) are kept for a 2-class model
+        valid_idx = (y == 0) | (y == 1)
+        if not np.all(valid_idx):
+            invalid_count = np.sum(~valid_idx)
+            self.logger.info(f"  Filtering out {invalid_count} trials with unexpected labels (e.g., class >= 2)")
+            X = X[valid_idx]
+            y = y[valid_idx]
+
+        self.logger.info("  Step 1: Z-score normalization...")
+        # standard z-score norm
         X_normalized = np.array([
             (trial - np.mean(trial, axis=1, keepdims=True)) / 
             (np.std(trial, axis=1, keepdims=True) + 1e-8)
@@ -527,7 +538,7 @@ class PersonalModelFineTuner:
             early_stop_patience = 100 if self.personalize else EARLY_STOPPING_PATIENCE
         
         # Callbacks
-        checkpoint_path = self.save_dir / f"{self.user_id}_finetuned_best.keras"
+        checkpoint_path = self.save_dir / f"{self.user_id}_finetuned_{self.timestamp_str}_best.keras"
         callbacks = [
             EarlyStopping(
                 monitor='val_accuracy',
@@ -712,12 +723,12 @@ class PersonalModelFineTuner:
             n_trainable_params: Number of trainable parameters
         """
         # Save model
-        model_path = self.save_dir / f"{self.user_id}_finetuned.keras"
+        model_path = self.save_dir / f"{self.user_id}_finetuned_{self.timestamp_str}.keras"
         model.save(model_path)
         self.logger.info(f"💾 Saved model: {model_path}")
         
         # Save threshold
-        threshold_path = self.save_dir / f"{self.user_id}_neutral_threshold.json"
+        threshold_path = self.save_dir / f"{self.user_id}_neutral_threshold_{self.timestamp_str}.json"
         with open(threshold_path, 'w') as f:
             json.dump(threshold_info, f, indent=2)
         self.logger.info(f"💾 Saved threshold: {threshold_path}")
@@ -754,7 +765,7 @@ class PersonalModelFineTuner:
             'neutral_threshold': threshold_info
         }
         
-        metadata_path = self.save_dir / f"{self.user_id}_metadata.json"
+        metadata_path = self.save_dir / f"{self.user_id}_metadata_{self.timestamp_str}.json"
         with open(metadata_path, 'w') as f:
             json.dump(metadata, f, indent=2)
         self.logger.info(f"💾 Saved metadata: {metadata_path}")
@@ -920,7 +931,7 @@ def main():
     parser.add_argument(
         '--personalize',
         action='store_true',
-        help='AGGRESSIVE PERSONALIZATION MODE: Minimal validation (5%), max epochs (500), patient early stopping (100 patience). Targets 85%+ accuracy by learning your unique patterns.'
+        help='AGGRESSIVE PERSONALIZATION MODE: Minimal validation (5%%), max epochs (500), patient early stopping (100 patience). Targets 85%%+ accuracy by learning your unique patterns.'
     )
     parser.add_argument(
         '--no-validation',

@@ -1,12 +1,68 @@
 {
   "personalized_models": {
     "alan": {
-      "model_path": "C:\\programs\\BCI_IOT_PARALYSED\\code\\models\\personalized\\alan_finetuned.keras",
+      "model_path": "C:\\programs\\BCI_IOT_PARALYSED\\CODE\\models\\personalized\\alan_finetuned_20260511_072049.keras",
       "threshold": 0.7,
       "metadata": {
-        "timestamp": "2026-03-18T11:24:31.024709",
-        "val_accuracy": 0.800000011920929,
+        "timestamp": "2026-05-11T07:24:15.468882",
+        "val_accuracy": 0.6989966630935669,
         "fine_tuning_strategy": "full",
+        "calibration_file": "alan_calibration_20260318_105119_preprocessed.npz"
+      }
+    },
+    "alan_fbcsp_svm": {
+      "model_path": "C:\\programs\\BCI_IOT_PARALYSED\\CODE\\svm\\fbcsp_svm.joblib",
+      "model_type": "FBCSP_SVM",
+      "threshold": 0.5,
+      "metadata": {
+        "timestamp": "2026-05-10T18:59:16.811940",
+        "val_accuracy": 0.40378378378378377,
+        "k_components": 4,
+        "k_best_features": 20,
+        "svm_C": 0.1,
+        "svm_gamma": "auto",
+        "calibration_file": "alan_calibration_20260318_105119_preprocessed.npz"
+      }
+    },
+    "alan_fbcsp_svm_20260510_191708": {
+      "model_path": "C:\\programs\\BCI_IOT_PARALYSED\\CODE\\svm\\fbcsp_svm_20260510_190940.joblib",
+      "model_type": "FBCSP_SVM",
+      "threshold": 0.5,
+      "metadata": {
+        "timestamp": "2026-05-10T19:17:08.205800",
+        "val_accuracy": 0.40378378378378377,
+        "k_components": 4,
+        "k_best_features": 20,
+        "svm_C": 0.1,
+        "svm_gamma": "auto",
+        "calibration_file": "alan_calibration_20260318_105119_preprocessed.npz"
+      }
+    },
+    "alan_fbcsp_svm_20260510_192037": {
+      "model_path": "C:\\programs\\BCI_IOT_PARALYSED\\CODE\\svm\\fbcsp_svm_20260510_191905.joblib",
+      "model_type": "FBCSP_SVM",
+      "threshold": 0.5,
+      "metadata": {
+        "timestamp": "2026-05-10T19:20:37.437133",
+        "val_accuracy": 0.3902342342342343,
+        "k_components": 4,
+        "k_best_features": 18,
+        "svm_C": 0.1,
+        "svm_gamma": "auto",
+        "calibration_file": "alan_calibration_20260318_105119_preprocessed.npz"
+      }
+    },
+    "alan_fbcsp_svm_20260511_072905": {
+      "model_path": "C:\\programs\\BCI_IOT_PARALYSED\\CODE\\svm\\fbcsp_svm_20260511_072601.joblib",
+      "model_type": "FBCSP_SVM",
+      "threshold": 0.5,
+      "metadata": {
+        "timestamp": "2026-05-11T07:29:05.043173",
+        "val_accuracy": 0.411963963963964,
+        "k_components": 4,
+        "k_best_features": 27,
+        "svm_C": 10,
+        "svm_gamma": 1,
         "calibration_file": "alan_calibration_20260318_105119_preprocessed.npz"
       }
     }

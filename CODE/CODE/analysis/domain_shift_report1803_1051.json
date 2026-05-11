@@ -48,39 +48,40 @@
     ],
     "sampling_rate": 250.0,
     "channel_std_mean": [
-      1.0,
-      1.0,
-      1.0
+      181.75904846191406,
+      172.84567260742188,
+      154.55191040039062
     ],
     "mu_power_mean": [
-      0.12337326982744654,
-      0.12692285227758385,
-      0.12170083327128488
+      83.15699607425682,
+      77.68192816685622,
+      72.09532867475058
     ],
     "beta_power_mean": [
-      0.36494247830391807,
-      0.3834020654568976,
-      0.3702506463448313
+      278.9152193012263,
+      271.5145498201723,
+      248.41439547208972
     ],
-    "line50_to_motor_ratio": 0.0007953027486223488,
+    "line50_to_motor_ratio": 3.2834992915467223,
     "class_separation": {
       "classes": [
         0,
         1
       ],
       "effect_size_per_feature": [
-        0.08627749199803655,
-        0.255785264896082,
-        0.16560745777501742,
-        0.13349205325447216,
-        0.1854808712833906,
-        0.21355348740762234
+        0.17024299001571247,
+        0.14630321790586961,
+        0.14335269789680927,
+        0.15487645108700368,
+        0.15537367512965444,
+        0.15567085551368723
       ],
-      "mean_effect_size": 0.1733661044357702
+      "mean_effect_size": 0.1543033145914561
     }
   },
-  "feature_frechet_distance": 32.36615918573375,
+  "feature_frechet_distance": 59.024289576121035,
   "recommendations": [
+    "Powerline noise is higher in personal data; keep notch enabled and improve grounding/contact.",
     "Amplitude scale mismatch detected; test z-score normalization ON for realtime.",
     "Domain shift is high; fine-tune final dense layer on personal labeled data.",
     "Evaluate both --laplacian and --no-laplacian using the same session and keep whichever gives better class separation.",

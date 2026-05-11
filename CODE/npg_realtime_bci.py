@@ -64,6 +64,7 @@ class NPGRealtimeBCI:
                  window_overlap: float = 0.5,
                  simulate: bool = False,
                  simulate_normal: bool = False,
+                 simulate_pattern: str = "10",
                  temperature: float = 1.5,
                  use_calibration: bool = True,
                  use_smiley_feedback: bool = False,
@@ -93,6 +94,7 @@ class NPGRealtimeBCI:
             window_overlap: Overlap ratio for sliding windows (0-1)
             simulate: Use simulator instead of real device
             simulate_normal: Use simulator but process through model (if False, simulator bypasses model with hardcoded patterns)
+            simulate_pattern: Pattern for simulation (e.g., "10" for R-L, "1100" for R-R-L-L)
             temperature: Temperature for calibrated confidence (default: 1.5)
             use_calibration: Whether to use temperature-scaled confidence
             use_smiley_feedback: Use Smiley Feedback running integral (default: False)
@@ -107,6 +109,7 @@ class NPGRealtimeBCI:
         """
         self.simulate = simulate
         self.simulate_normal = simulate_normal
+        self.simulate_pattern = str(simulate_pattern) if simulate_pattern else "10"
         self.confidence_threshold = confidence_threshold
         self.use_smiley_feedback = use_smiley_feedback
         self.is_running = False
@@ -134,9 +137,9 @@ class NPGRealtimeBCI:
         # Log simulation mode
         if self.simulate:
             if self.simulate_normal:
-                self.logger.info(f"  Mode: SIMULATE NORMAL (synthetic data → model inference)")
+                self.logger.info(f"  Mode: SIMULATE NORMAL")
             else:
-                self.logger.info(f"  Mode: SIMULATE BYPASS (synthetic data → hardcoded predictions)")
+                self.logger.info(f"  Mode: SIMULATE BYPASS (pattern: {self.simulate_pattern})")
         else:
             self.logger.info(f"  Mode: REAL DEVICE")
         
@@ -493,15 +496,20 @@ class NPGRealtimeBCI:
             
             # === SIMULATE BYPASS MODE: Bypass model with hardcoded pattern ===
             if self.simulate and not self.simulate_normal:
-                # Generate hardcoded predictions: LEFT (5s) → RIGHT (5s) → LEFT (5s) → repeat
+                # Generate hardcoded predictions based on requested pattern
+                pattern_len = len(self.simulate_pattern)
+                cycle_duration = pattern_len * 5  # 5 seconds per character
                 runtime = time.time() - self.start_time
-                cycle_pos = int(runtime) % 10  # 10-second cycle
+                cycle_pos = int(runtime) % cycle_duration
                 
-                if cycle_pos < 5:
+                char_idx = cycle_pos // 5
+                char = self.simulate_pattern[char_idx]
+                
+                if char == '1':
                     class_idx = 0
                     class_name = 'LEFT_HAND'
                     confidence = 0.92
-                else:
+                else:  # '0' or any other char defaults to RIGHT_HAND
                     class_idx = 1
                     class_name = 'RIGHT_HAND'
                     confidence = 0.91
@@ -837,9 +845,14 @@ class NPGRealtimeBCI:
 
         is_edge = self.api_prev_command != command
         if not is_edge:
-            self.logger.info(f"🚫 API BLOCK | no-edge repeat | cmd={command}")
-            self.api_prev_command = command
-            return
+            since_last = now - self.api_last_sent_time[command]
+            if since_last >= 4.0:
+                self.logger.info(f"⏱️ API ALLOW | time-based repeat | cmd={command} since_last={since_last:.1f}s")
+                self.api_armed[command] = True  # Re-arm automatically for time-based repeat
+            else:
+                self.logger.info(f"🚫 API BLOCK | no-edge repeat | cmd={command} (wait {4.0 - since_last:.1f}s)")
+                self.api_prev_command = command
+                return
 
         since_last = now - self.api_last_sent_time[command]
         if since_last < self.api_cooldown:
@@ -1130,8 +1143,8 @@ def main():
     parser = argparse.ArgumentParser(description='NPG Lite Real-time BCI System (Upside Down Labs)')
     parser.add_argument('--user-id', type=str, default=None,
                        help='User ID to load personalized model from registry')
-    parser.add_argument('--simulate', action='store_true',
-                       help='Use simulator instead of real NPG Lite device')
+    parser.add_argument('--run', nargs='?', const='10', default=None, dest='simulate_pattern',
+                       help='Use simulator with loop pattern (e.g., 10 for L-R, 110 for L-L-R)')
     parser.add_argument('--direct', action='store_true',
                        help='Direct serial connection (no Chords-Python/LSL needed)')
     parser.add_argument('--port', type=str, default='COM6',
@@ -1197,6 +1210,9 @@ def main():
         datefmt='%H:%M:%S'
     )
     
+    # Suppress adapter and simulator logs to keep the console clean
+    logging.getLogger('npg_lite_adapter').setLevel(logging.WARNING)
+    
     # Load model from registry if user_id provided
     neutral_threshold = None
     if args.user_id:
@@ -1244,7 +1260,7 @@ def main():
         sys.exit(1)
     
     # Create BCI system based on mode
-    if args.simulate:
+    if args.simulate_pattern is not None:
         # Simulator mode
         bci = NPGRealtimeBCI(
             model_path=str(model_path),
@@ -1252,6 +1268,7 @@ def main():
             smoothing_window=args.smoothing,
             window_overlap=args.overlap,
             simulate=True,
+            simulate_pattern=args.simulate_pattern,
             use_smiley_feedback=args.smiley_feedback,
             smiley_window_duration=args.smiley_window,
             smiley_threshold=args.smiley_threshold,
@@ -1326,7 +1343,7 @@ def main():
         )
     
     # Connect
-    if args.simulate:
+    if args.simulate_pattern is not None:
         # Simulator auto-connects
         bci.adapter.connect()
     elif args.direct:

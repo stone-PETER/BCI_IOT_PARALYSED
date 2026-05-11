@@ -1,0 +1,53 @@
+{
+  "user_id": "alan",
+  "timestamp": "2026-05-10T19:47:54.987786",
+  "calibration_file": "calibration_data_preprocessed\\alan_calibration_20260318_105119_preprocessed.npz",
+  "base_model": "C:\\programs\\BCI_IOT_PARALYSED\\CODE\\models\\best_eegnet_2class_bci2b.keras",
+  "fine_tuning_strategy": "last-block",
+  "mixed_with_benchmark": false,
+  "personal_weight": 1.0,
+  "learning_rate": 0.0005,
+  "max_epochs": 500,
+  "best_epoch": 15,
+  "best_val_accuracy": 0.6000000238418579,
+  "best_train_accuracy": 0.5739436745643616,
+  "trainable_parameters": 1538,
+  "per_class_accuracy": {
+    "class_0_left": 0.7142857142857143,
+    "class_1_right": 0.5
+  },
+  "confusion_matrix": {
+    "values": [
+      [
+        5,
+        2
+      ],
+      [
+        4,
+        4
+      ]
+    ],
+    "labels": [
+      "LEFT (predicted)",
+      "RIGHT (predicted)"
+    ],
+    "note": "rows=true class, cols=predicted class"
+  },
+  "preprocessing": {
+    "z_score_normalization": true,
+    "laplacian_filter_applied": false,
+    "data_augmentation_applied": "auto (if < 100 trials)"
+  },
+  "neutral_threshold": {
+    "threshold": 0.7,
+    "mean": null,
+    "median": null,
+    "std": null,
+    "p75": 0.7,
+    "p90": null,
+    "recommended_min": 0.65,
+    "recommended_max": 0.75,
+    "n_rest_trials": 0,
+    "source": "default"
+  }
+}

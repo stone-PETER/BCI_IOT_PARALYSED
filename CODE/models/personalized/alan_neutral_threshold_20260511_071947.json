@@ -1,0 +1,12 @@
+{
+  "threshold": 0.7,
+  "mean": null,
+  "median": null,
+  "std": null,
+  "p75": 0.7,
+  "p90": null,
+  "recommended_min": 0.65,
+  "recommended_max": 0.75,
+  "n_rest_trials": 0,
+  "source": "default"
+}

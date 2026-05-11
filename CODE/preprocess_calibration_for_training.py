@@ -385,13 +385,18 @@ def main():
             X_left = np.transpose(epochs_left, (0, 2, 1))  # (n_left, channels, samples)
             X_right = np.transpose(epochs_right, (0, 2, 1))  # (n_right, channels, samples)
             
-            # Combine with labels
-            X = np.vstack([X_left, X_right])
-            y = np.hstack([np.zeros(len(X_left), dtype=int), np.ones(len(X_right), dtype=int)])
-            
             # Convert rest epochs if present
             if rest_epochs is not None:
                 rest_epochs = np.transpose(rest_epochs, (0, 2, 1))
+                X = np.vstack([X_left, X_right, rest_epochs])
+                y = np.hstack([
+                    np.zeros(len(X_left), dtype=int), 
+                    np.ones(len(X_right), dtype=int),
+                    np.full(len(rest_epochs), 2, dtype=int)
+                ])
+            else:
+                X = np.vstack([X_left, X_right])
+                y = np.hstack([np.zeros(len(X_left), dtype=int), np.ones(len(X_right), dtype=int)])
         else:
             raise ValueError(f"Unknown NPZ format. Keys: {list(data.keys())}")
     
