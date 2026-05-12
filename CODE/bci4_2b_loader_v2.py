@@ -414,26 +414,26 @@ class BCI4_2B_Loader:
         # Load benchmark data
         benchmark_epochs, benchmark_labels = self.load_all_subjects(sessions=benchmark_sessions)
         
-        # Calculate sampling ratios
+        # FIX: Ensure shapes match before concatenating
+        if personal_epochs.ndim == 3 and benchmark_epochs.ndim == 3:
+            if personal_epochs.shape[1] == 3 and benchmark_epochs.shape[2] == 3:
+                # personal is (trials, channels, samples), benchmark is (trials, samples, channels)
+                benchmark_epochs = np.transpose(benchmark_epochs, (0, 2, 1))
+            elif personal_epochs.shape[2] == 3 and benchmark_epochs.shape[1] == 3:
+                # personal is (trials, samples, channels), benchmark is (trials, channels, samples)
+                benchmark_epochs = np.transpose(benchmark_epochs, (0, 2, 1))
+
         n_personal = len(personal_epochs)
-        n_benchmark_target = int(n_personal * (1 - personal_weight) / personal_weight)
-        
-        # Sample from benchmark data
-        if n_benchmark_target < len(benchmark_epochs):
-            indices = np.random.choice(
-                len(benchmark_epochs),
-                size=n_benchmark_target,
-                replace=False
-            )
-            benchmark_epochs = benchmark_epochs[indices]
-            benchmark_labels = benchmark_labels[indices]
-        
-        # Combine
+        n_benchmark = len(benchmark_epochs)
+        self.logger.info(f"  Personal data: {n_personal} epochs ({personal_weight*100:.0f}%)")
+        self.logger.info(f"  Benchmark data: {n_benchmark} epochs")
+
+        # Combine datasets
         epochs = np.concatenate([personal_epochs, benchmark_epochs], axis=0)
         labels = np.concatenate([personal_labels, benchmark_labels], axis=0)
         
         self.logger.info(f"  Personal data: {n_personal} epochs ({personal_weight*100:.0f}%)")
-        self.logger.info(f"  Benchmark data: {len(benchmark_epochs)} epochs ({(1-personal_weight)*100:.0f}%)")
+        self.logger.info(f"  Benchmark data: {n_benchmark} epochs")
         self.logger.info(f"  Total: {len(epochs)} epochs")
         
         return epochs, labels
